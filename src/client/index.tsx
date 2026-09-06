@@ -108,7 +108,7 @@ interface LegacyCredentialsApi {
 }
 interface SettingsFace { scope: SettingsScope<ImageSettings>; credentials: CredentialsRemote; locale?: LocaleService | undefined }
 interface ImageCardFace { locale?: LocaleService | undefined; promoted: boolean }
-type SettingsCardProps = PropsRuntime<'settings.plugin.item'> & InjectFace<SettingsFace>
+type SettingsCardProps = PropsRuntime<'settings.section'> & InjectFace<SettingsFace>
 type ImageCardProps = PropsRuntime<'tool.call.toolview'> & InjectFace<ImageCardFace>
 interface ImageResultNodeProps {
   node: { data: { results: readonly ImageResultPresentation[] } }
@@ -610,17 +610,12 @@ export function apply(ctx: Context): void {
     },
   )
 
-  // 1. Settings item
-  const injectSettingsItem = (owner: Context, credentials: CredentialsRemote): void => {
-    const ownerRegister = owner.slots.register.bind(owner.slots) as unknown as (options: object, component: unknown) => () => void
-    owner.slots.inject('settings.plugin.item', () => ownerRegister({
-      name: 'settings.plugin.item',
-      key: IMAGE_GENERATION_NAMESPACE,
-      inject: (): SettingsFace => ({ scope, credentials, locale }),
-    }, ImageGenerationSettingsCard))
-    // Top-level settings section: a sibling page of General / Models / Plugins
-    // hosting the same always-expanded card body.
-    ;(owner.slots.inject as any)('settings.section', () => register({
+  // 1. Top-level settings section: a sibling page of General / Models /
+  // Plugins. The legacy `settings.plugin.item` card is intentionally not
+  // registered — a served namespace no card claims renders nothing, so the
+  // Plugins tab stays clean with this page as the single settings surface.
+  const injectSettingsSection = (credentials: CredentialsRemote): void => {
+    ;(ctx.slots.inject as any)('settings.section', () => register({
       name: 'settings.section',
       id: IMAGE_GENERATION_NAMESPACE,
       order: 600,
@@ -629,19 +624,19 @@ export function apply(ctx: Context): void {
         return active?.startsWith('en') ? 'Image generation' : '图像生成'
       },
       inject: (): SettingsFace => ({ scope, credentials, locale }),
-    }, ImageGenerationSettingsSection))
+    }, ImageGenerationSettingsCard))
   }
   const remoteCredentials = asCredentialsRemote(ctx.get('remote.credentials'))
   const legacyCredentials = credentialsFromLegacyConnection(ctx.get('connection'))
   if (remoteCredentials !== undefined) {
-    injectSettingsItem(ctx, remoteCredentials)
+    injectSettingsSection(remoteCredentials)
   } else if (legacyCredentials !== undefined) {
-    injectSettingsItem(ctx, legacyCredentials)
+    injectSettingsSection(legacyCredentials)
   } else {
     ctx.inject(['remote.credentials'], (remoteCtx) => {
       const credentials = asCredentialsRemote(remoteCtx.get('remote.credentials'))
       if (credentials === undefined) throw new Error('dsh-image-gen: remote.credentials has an incompatible interface')
-      injectSettingsItem(remoteCtx, credentials)
+      injectSettingsSection(credentials)
     })
   }
 
@@ -708,14 +703,8 @@ function credentialsFromLegacyConnection(value: unknown): CredentialsRemote | un
   }
 }
 
-/** Top-level settings section page: the same card body, always expanded. */
-function ImageGenerationSettingsSection(props: SettingsCardProps & { close?: () => void }) {
-  return <ImageGenerationSettingsCard {...props} embedded />
-}
-
 /** Edit provider settings and its write-only API credential. */
-export function ImageGenerationSettingsCard(props: SettingsCardProps & { embedded?: boolean }) {
-  const [open, setOpen] = useState(() => props.embedded === true)
+export function ImageGenerationSettingsCard(props: SettingsCardProps) {
   const [snapshot, setSnapshot] = useState(() => props.scope.getSnapshot())
   const [lang, setLang] = useState(() => (props.locale?.getSnapshot?.()?.active?.startsWith('en') ? 'en' : 'zh'))
   const [channels, setChannels] = useState<ChannelDraft[]>([])
@@ -950,23 +939,9 @@ export function ImageGenerationSettingsCard(props: SettingsCardProps & { embedde
     setWorkflows(current => current.map((entry, position) => position === index ? { ...entry, presetPrompt } : entry))
   }
 
-  const isEmbedded = props.embedded === true
-  const expanded = isEmbedded || open
   const content = (
     <>
-      {isEmbedded ? null : (
-      <button type="button" className="dsh-ig-head" aria-expanded={open} onClick={() => { setOpen(value => !value) }}>
-        <span className="dsh-ig-head-text">
-          <span className="dsh-ig-title">{t('title')}</span>
-          <span className="dsh-ig-desc">{t('description')}</span>
-        </span>
-        <span className={`dsh-ig-chevron ${open ? 'dsh-ig-chevron-open' : ''}`} aria-hidden="true">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4"/></svg>
-        </span>
-      </button>
-      )}
-      {expanded ? (
-        <form className="dsh-ig-body" onSubmit={(event) => { void save(event) }}>
+      <form className="dsh-ig-body" onSubmit={(event) => { void save(event) }}>
           <div className="dsh-ig-channel dsh-ig-channel-open">
             <div className="dsh-ig-channel-body">
               <label className="dsh-ig-check-row">
@@ -1120,7 +1095,6 @@ export function ImageGenerationSettingsCard(props: SettingsCardProps & { embedde
           ))}
           <button type="button" className="dsh-ig-file-button" onClick={addChannel}>{t('addChannel')}</button>
         </form>
-      ) : null}
       {picker !== null ? (
         <div className="dsh-ig-regenerate-backdrop" onClick={() => { setPicker(null) }}>
           <div className="dsh-ig-regenerate-dialog dsh-ig-picker" onClick={event => { event.stopPropagation() }}>
@@ -1149,10 +1123,7 @@ export function ImageGenerationSettingsCard(props: SettingsCardProps & { embedde
       ) : null}
     </>
   )
-  if (isEmbedded) return <div className="dsh-ig-page">{content}</div>
-  return (
-    <li className={`dsh-ig-card ${open ? 'dsh-ig-card-open' : ''}`}>{content}</li>
-  )
+  return <div className="dsh-ig-page">{content}</div>
 }
 
 /** Keep the legacy Tool row for old DSH and hand modern results to the independent Chat node. */

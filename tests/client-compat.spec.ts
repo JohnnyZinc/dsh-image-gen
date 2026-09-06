@@ -30,7 +30,7 @@ function clientHarness(options: {
   let credentialsFace: unknown
   const slots = {
     register: vi.fn((registration: { name?: string; inject?: () => { credentials?: unknown } }, component: unknown) => {
-      if (registration.name === 'settings.plugin.item') credentialsFace = registration.inject?.().credentials
+      if (registration.name === 'settings.section') credentialsFace = registration.inject?.().credentials
       slotRegistrations.push({ options: registration as Record<string, unknown>, component })
       return vi.fn()
     }),
@@ -75,7 +75,7 @@ describe('DSH client compatibility', () => {
     await fiber.await()
 
     expect(fiber.state).toBe(2)
-    const injectSettingsCard = harness.registrations.get('settings.plugin.item')
+    const injectSettingsCard = harness.registrations.get('settings.section')
     expect(injectSettingsCard).toBeTypeOf('function')
     expect(() => injectSettingsCard?.()).not.toThrow()
     const credentials = harness.injectedCredentials() as {
@@ -105,7 +105,7 @@ describe('DSH client compatibility', () => {
     await fiber.await()
 
     expect(fiber.state).toBe(2)
-    const injectSettingsCard = harness.registrations.get('settings.plugin.item')
+    const injectSettingsCard = harness.registrations.get('settings.section')
     expect(injectSettingsCard).toBeTypeOf('function')
     expect(() => injectSettingsCard?.()).not.toThrow()
     expect(harness.injectedCredentials()).toBe(credentials)
@@ -189,13 +189,13 @@ describe('DSH client compatibility', () => {
     await fiber.await()
 
     expect(fiber.state).toBe(2)
-    expect(harness.registrations.has('settings.plugin.item')).toBe(false)
+    expect(harness.registrations.has('settings.section')).toBe(false)
 
     harness.ctx.provide('remote.credentials', credentials)
     await vi.waitFor(() => {
-      expect(harness.registrations.get('settings.plugin.item')).toBeTypeOf('function')
+      expect(harness.registrations.get('settings.section')).toBeTypeOf('function')
     })
-    expect(() => harness.registrations.get('settings.plugin.item')?.()).not.toThrow()
+    expect(() => harness.registrations.get('settings.section')?.()).not.toThrow()
     expect(harness.injectedCredentials()).toBe(credentials)
 
     await fiber.dispose()
