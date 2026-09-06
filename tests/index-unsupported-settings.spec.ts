@@ -48,6 +48,10 @@ describe('unsupported dsh-settings degradation', () => {
     expect(tools.map(tool => tool.name)).toEqual(['generate_image', 'edit_image'])
     expect(ctx.logger.warn).toHaveBeenCalledTimes(1)
     expect(vi.mocked(ctx.logger.warn).mock.calls[0]?.[0]).toContain('neither settings API generation')
-    expect(ctx.inject).not.toHaveBeenCalled()
+    // The settings wiring itself must not wait on a 'settings' service; the
+    // orthogonal optional systemPrompt injection may still use ctx.inject.
+    for (const call of vi.mocked(ctx.inject).mock.calls) {
+      expect(call[0]).not.toContain('settings')
+    }
   })
 })

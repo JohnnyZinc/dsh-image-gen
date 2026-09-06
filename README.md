@@ -232,9 +232,15 @@ pnpm dsh plugin --profile web add ./dsh-image-gen
 | **OpenAI Images / Compatible**    |    ✅    | ✅ 多图  |   ✅   |     ✅     |
 | **ByteDance Seedream / 火山方舟** |    ✅    | ✅ 多图  |   ✅   |     ✅     |
 | **Aliyun DashScope / Qwen Image** |    ✅    | ✅ 多图  |   ✅   |     ✅     |
+| **Gitee AI**                      |    ✅    | ✅ 多图  |   ✅   |     ✅     |
+| **ModelScope (魔搭)**             |    ✅    |   —     |   ✅   |     ✅     |
 | **Local ComfyUI**                 |    ✅    | ✅ 单图  |   —    |     —      |
 
 > Studio 与多模型对比目前只支持云端 Provider；多模型对比调用的是各 Provider 在设置中已配置的模型。
+>
+> **Gitee AI 渠道**内置平台级尺寸注册表（13 档预设 + `width`/`height` 逃生舱），对渠道内全部模型家族生效——z-image、FLUX.1/FLUX.2、Kolors、CogView、SD3.5/SDXL、Qwen-Image、GLM-Image 等。对话中只需说比例（如 3:4）和清晰度（1K/2K），插件翻译成 Gitee 合法预设（3:4 + 1K → `768x1024`）；需要精确像素时说 `864x1152` 这类分辨率，插件自动改走 `width`/`height` 字段并做 512–2048 范围钳制，杜绝 400「参数无效 size」。
+>
+> **ModelScope 渠道**走魔搭官方异步任务协议（`X-ModelScope-Async-Mode` 提交 → 任务轮询 → `output_images` 下载），`size` 为自由 "WxH" 串（每边 512–2048，无枚举限制），采样参数用 ModelScope 方言（`steps`/`guidance`）。图生图协议尚未验证，暂不支持编辑。
 
 <details>
 <summary><strong>当前默认模型与 Endpoint（均可修改）</strong></summary>
@@ -246,9 +252,19 @@ pnpm dsh plugin --profile web add ./dsh-image-gen
 | OpenAI Compatible  | 自定义                       | 自定义 Base URL                                                 |
 | ByteDance Seedream | `doubao-seedream-5-0-260128` | `https://ark.cn-beijing.volces.com/api/v3`                      |
 | Aliyun DashScope   | `qwen-image-3.0`             | `https://dashscope.aliyuncs.com/api/v1`                         |
+| Gitee AI           | `z-image-turbo`              | `https://ai.gitee.com/v1`（凭据 `GITEE_API_KEY`）               |
+| ModelScope (魔搭)  | `Tongyi-MAI/Z-Image-Turbo`   | `https://api-inference.modelscope.cn/v1`（凭据 `MODELSCOPE_API_KEY`） |
 | Local ComfyUI      | 用户导入的 API Workflow      | `http://127.0.0.1:8188`                                         |
 
 </details>
+
+### 多渠道与默认模型（0.5.x–0.6.x）
+
+- 每个 Provider 都支持配置**模型列表**（`googleModels` / `openaiModels` / `seedreamModels` / `dashscopeModels` / `giteeModels` / `modelscopeModels`）。设置面板提供**「获取模型列表」**按钮：经宿主代理拉取端点的 `/models`（API Key 不出宿主；Gitee AI 与 ModelScope 的列表端点公开可用），勾选确认即用，也支持手动添加自定义模型。
+- **每个渠道的模型列表用单选钮选定一个默认模型**；用户不指定渠道和模型时，生图固定走默认——**没有询问环节，也没有常驻提示词注入**，流程最短。想换模型就到设置里点另一个单选钮（配置热生效，无需重启）。
+- 点名模型仍然可用：说"用 FLUX.2-dev 画…"时，插件会自动切换到承载该模型的渠道；模型名未配置或跨渠道歧义时返回带完整选项列表的错误。
+- 设置面板同时挂载为**顶级标签页「图像生成」**（与通用设置、模型、插件、Agent 预设同级），插件页卡片保留作兜底。
+- 工具参数收敛为**比例 + 清晰度**词汇表（`aspect_ratio` / `quality`），按渠道翻译为各自的合法参数（含按模型尺寸上限与 width/height 逃生舱）；`resolution` 仅在用户要求精确像素时使用。
 
 ---
 

@@ -3,6 +3,7 @@ import {
   type CloudImageProvider,
   type StudioGenerateRequest,
 } from '../shared.js'
+import { giteeRatioOf } from '../vocab.js'
 
 export interface RegeneratableImage {
   provider: string
@@ -43,6 +44,14 @@ function outputSettings(provider: CloudImageProvider, output?: string | undefine
   if (provider === 'seedream') {
     return { ratio: 'auto', quality: normalized === '1K' || normalized === '4K' ? normalized : '2K' }
   }
+  if (provider === 'gitee' || provider === 'modelscope') {
+    // ModelScope shares the preset vocabulary with Gitee (same "WxH" values);
+    // free-form sizes reverse-map to the nearest shared ratio. Output may
+    // carry translation notes after " — "; the size token comes first.
+    const size = normalized.split(' — ')[0]?.trim() ?? ''
+    const reversed = giteeRatioOf(size)
+    return { ratio: reversed.ratio, quality: reversed.quality }
+  }
   if (provider === 'openai') {
     return { ratio: ratioFromSize(normalized, 'x'), quality: 'standard' }
   }
@@ -51,7 +60,15 @@ function outputSettings(provider: CloudImageProvider, output?: string | undefine
 
 function ratioFromSize(size: string, separator: 'x' | '*'): string {
   const sizes: Record<string, string> = separator === 'x'
-    ? { '1024x1024': '1:1', '1536x1024': '3:2', '1024x1536': '2:3' }
+    ? {
+        '1024x1024': '1:1', '2048x2048': '1:1',
+        '1536x1024': '3:2', '1920x1280': '3:2',
+        '1024x1536': '2:3', '1280x1920': '2:3',
+        '1360x1024': '4:3', '1792x1344': '4:3',
+        '1024x1360': '3:4', '1344x1792': '3:4',
+        '1792x1024': '16:9', '1920x1088': '16:9',
+        '1024x1792': '9:16', '1088x1920': '9:16',
+      }
     : { '1024*1024': '1:1', '1536*1024': '3:2', '1024*1536': '2:3', '1664*928': '16:9', '928*1664': '9:16' }
   return sizes[size] ?? '1:1'
 }

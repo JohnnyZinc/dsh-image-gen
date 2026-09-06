@@ -19,14 +19,14 @@ export async function generateOpenAICompatibleImage(input: {
   baseURL: string
   model: string
   prompt: string
-  size: string
+  size?: string | undefined
   maxBytes: number
   signal: AbortSignal
 }): Promise<GeneratedCompatibleImage> {
   const response = await fetch(imageEndpoint(input.baseURL, 'generations'), {
     method: 'POST', redirect: 'error', signal: input.signal,
     headers: { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model: input.model, prompt: input.prompt, size: input.size, ...(input.provider === 'seedream' ? { response_format: 'url' } : {}) }),
+    body: JSON.stringify({ model: input.model, prompt: input.prompt, ...(input.size !== undefined && input.size !== '' ? { size: input.size } : {}), ...(input.provider === 'seedream' ? { response_format: 'url' } : {}) }),
   })
   return parseImageResponse(response, input.provider, input)
 }
@@ -61,7 +61,8 @@ export async function editOpenAICompatibleImage(input: {
   return parseImageResponse(response, 'openai', input)
 }
 
-async function parseImageResponse(
+/** Shared tolerant parser (data[]/images[]/output[] + b64_json/url); reused by the Gitee adapter. */
+export async function parseImageResponse(
   response: Response,
   provider: string,
   input: { maxBytes: number; signal: AbortSignal; apiKey?: string },

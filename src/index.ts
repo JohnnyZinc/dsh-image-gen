@@ -5,11 +5,14 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import * as dshSettings from '@deepseek-ai/dsh-settings'
 import { defineTool, type ToolResult } from '@deepseek-ai/dsh-tools'
-import { Config, resolveProvider, selectComfyUIWorkflow, type AspectRatio, type ImageProvider, type ImageSize } from './config.js'
+import { Config, channelProfile, resolveAgentSelection, resolveProvider, selectComfyUIWorkflow, withProviderModel, type ImageProvider } from './config.js'
 import { editComfyUIImage, generateComfyUIImage } from './comfyui.js'
 import { editDashScopeImage, generateDashScopeImage } from './dashscope.js'
+import { editGiteeImage, generateGiteeImage } from './gitee.js'
+import { generateModelScopeImage } from './modelscope.js'
 import { editGoogleImage, generateGoogleImage } from './google.js'
 import { IMAGE_ROUTE, DELETE_ROUTE, SAVE_WORKSPACE_ROUTE, imageAttachmentFromMeta, serveImage, serveDelete, serveSaveWorkspace } from './image-route.js'
+import { MODELS_ROUTE, serveModels } from './models-route.js'
 import { editOpenAICompatibleImage, generateOpenAICompatibleImage } from './openai-compatible.js'
 import { resolveReferenceImages } from './reference-image.js'
 import { editSeedreamImage } from './seedream.js'
@@ -18,6 +21,7 @@ import { createInspirationRoute } from './inspiration-route.js'
 import { generateFromStudio, describeStudio } from './studio.js'
 import { serveStudio } from './studio-route.js'
 import { deleteImageFromWorkspace, getDshWorkspaceRoots, getDshWorkspacesFull, saveImageToWorkspace } from './workspace-save.js'
+import { googleAspect, googleSize, normalizeQuality, normalizeRatio, parseResolution, planLabel, seedreamTier, translateDashScopeSize, translateGiteeSize, translateModelScopeSize, translateOpenAICompatibleSize } from './vocab.js'
 
 export { Config } from './config.js'
 export { IMAGE_ROUTE, DELETE_ROUTE, SAVE_WORKSPACE_ROUTE, imageAttachmentFromMeta } from './image-route.js'
@@ -32,6 +36,8 @@ interface GeneratedValue {
   provider: ImageProvider
   model: string
   output: string
+  /** Size adjustments the translation layer made (clamps, nearest mappings). */
+  notes?: string
   savedTo?: string
   saveError?: string
   /** Concrete workflow seed, exposed by the ComfyUI provider for provenance. */
@@ -111,69 +117,113 @@ export function apply(ctx: Context, config: Config = {}): void {
       return serveInspiration(req, res)
     },
   }), 'dsh-image-gen: inspiration route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact', path: MODELS_ROUTE,
+    handler: (req, res) => serveModels(req, res, {
+      resolveCredential: async credentialEnv => ctx.credentials.resolve(credentialRef(credentialEnv)),
+    }),
+  }), 'dsh-image-gen: models route')
 
   ctx.tools.register(defineTool({
     name: 'generate_image',
-    description: 'Generate a new image with the configured provider. Use when the user asks to create or draw a new image; use edit_image instead when they want to change an existing image. Give a complete visual prompt including subject, composition, style, lighting, and any exact text that should appear. A successful image is attached directly to the conversation and may also be saved under the session workspace. Do not call read, glob, or other tools to locate or verify the image.',
+    description: 'Generate a new image with the configured image channels (Google Gemini, OpenAI, Seedream, DashScope, Gitee AI, ModelScope, or a local ComfyUI workflow). Use when the user asks to create or draw a new image; use edit_image instead when they want to change an existing image. Speak only aspect_ratio and quality — the plugin translates them into channel-legal parameters; pass resolution only when the user demands exact pixels. Omit channel and model to use the configured default; pass model (and channel when needed) only when the user names a specific one — unknown names fail with the closest option list. Give a complete visual prompt including subject, composition, style, lighting, and any exact text that should appear. A successful image is attached directly to the conversation and may also be saved under the session workspace. Do not call read, glob, or other tools to locate or verify the image.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'Complete description of the image to generate.' },
-      aspect_ratio: { type: 'string', enum: ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'], description: 'Optional output aspect ratio for Google Gemini.' },
-      image_size: { type: 'string', enum: ['1K', '2K', '4K'], description: 'Optional output resolution for Google Gemini.' },
-      size: { type: 'string', description: 'Optional dimensions or size tier for OpenAI, Seedream, or DashScope.' },
-      workflow: { type: 'string', description: 'Optional name of the ComfyUI workflow to run; omit to use the active workflow from settings. Only meaningful when the ComfyUI provider is selected.' },
+      channel: { type: 'string', description: 'Optional image channel: google, openai, seedream, dashscope, gitee, or comfyui. Omit when only one channel is configured; ambiguous calls fail with the full option list.' },
+      model: { type: 'string', description: 'Optional model on the chosen channel (for comfyui this is the workflow name). Omit when only one model is configured; ambiguous calls fail with the full option list.' },
+      aspect_ratio: { type: 'string', enum: ['auto', '1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'], description: 'Output aspect ratio. Map the user request to the nearest standard value; use auto only when they expressed none.' },
+      quality: { type: 'string', enum: ['auto', '1K', '2K', '4K'], description: 'Quality tier: 1K, 2K, 4K, or auto when the user expressed none.' },
+      resolution: { type: 'string', description: 'Optional exact pixel resolution "WxH" (for example 864x1152) when the user demands specific dimensions; each channel converts it into a legal request. Prefer aspect_ratio otherwise.' },
+      workflow: { type: 'string', description: 'Legacy alias of model for the ComfyUI channel; omit to use the active workflow from settings.' },
     },
     output: imageOutput('Generated'),
     async execute(args, exec): Promise<GeneratedValue> {
-      const active = resolveProvider(current())
-      if (active.provider === 'comfyui') {
-        const workflow = selectComfyUIWorkflow(active, args.workflow)
+      const config = current()
+      const selection = resolveAgentSelection(config, args.channel, args.model)
+      const channel = selection.channel
+      if (channel.provider === 'comfyui') {
+        const comfy = resolveProvider(channelProfile(config, channel))
+        if (comfy.provider !== 'comfyui') throw new Error('ComfyUI channel could not be resolved')
+        const workflow = selectComfyUIWorkflow(comfy, firstNonEmptyString(args.model, args.workflow))
         const generated = await generateComfyUIImage({
-          baseURL: active.baseURL,
+          baseURL: comfy.baseURL,
           workflowJson: workflow.json,
           prompt: mergeComfyUIPrompt(workflow.presetPrompt, args.prompt),
-          timeoutMs: active.timeoutMs,
+          timeoutMs: comfy.timeoutMs,
           maxBytes: ctx.attachments.imageLimits.maxImageBytes,
           signal: exec.signal,
         })
-        return saveGenerated(ctx, generated, active.provider, workflow.name, 'API workflow', current(), exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'comfyui', workflow.name, 'API workflow', config, exec, knownWorkspaceRoots)
       }
-      const credential = await ctx.credentials.resolve(credentialRef(active.apiKeyEnv))
-      if (credential === undefined || credential.value.length === 0) throw new Error(`generate_image requires the ${active.apiKeyEnv} credential; configure it in Settings > Plugins > Image generation.`)
+      const model = selection.model
+      const active = resolveProvider(channelProfile(config, channel, model))
+      if (active.provider === 'comfyui') throw new Error('ComfyUI channel could not be resolved')
+      const credentialEnv = channel.apiKeyEnv !== undefined && channel.apiKeyEnv.trim() !== '' ? channel.apiKeyEnv.trim() : active.apiKeyEnv
+      const credential = await ctx.credentials.resolve(credentialRef(credentialEnv))
+      if (credential === undefined || credential.value.length === 0) {
+        throw new Error(`${channel.label} (channel ${channel.id}) requires the ${credentialEnv} credential; configure it in Settings > Image generation.`)
+      }
+      const ratio = normalizeRatio(args.aspect_ratio)
+      const quality = normalizeQuality(args.quality)
+      const resolution = parseResolution(args.resolution)
       if (active.provider === 'google') {
-        const aspectRatio = (args.aspect_ratio ?? active.aspectRatio) as AspectRatio
-        const imageSize = (args.image_size ?? active.imageSize) as ImageSize
+        const aspectRatio = googleAspect(ratio)
+        const imageSize = googleSize(quality)
         const generated = await generateGoogleImage({ apiKey: credential.value, endpoint: active.endpoint, model: active.model, prompt: args.prompt, aspectRatio, imageSize, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, active.provider, active.model, `${aspectRatio}, ${imageSize}`, current(), exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'google', active.model, `${aspectRatio}, ${imageSize}`, config, exec, knownWorkspaceRoots)
+      }
+      if (active.provider === 'gitee') {
+        const plan = translateGiteeSize(active.model, ratio, quality, resolution)
+        const generated = await generateGiteeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'gitee', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+      }
+      if (active.provider === 'modelscope') {
+        const plan = translateModelScopeSize(ratio, quality, resolution)
+        const generated = await generateModelScopeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'modelscope', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
       }
       if (active.provider === 'dashscope') {
-        const size = args.size ?? active.imageSize
+        const plan = translateDashScopeSize(ratio, resolution)
+        const size = plan.size ?? '1024*1024'
         const generated = await generateDashScopeImage({ apiKey: credential.value, endpoint: active.endpoint, model: active.model, prompt: args.prompt, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'dashscope', active.model, size, config, exec, knownWorkspaceRoots, plan.notes)
       }
-      const size = args.size ?? active.imageSize
-      const generated = await generateOpenAICompatibleImage({ provider: active.provider, apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-      return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
+      if (active.provider === 'seedream') {
+        const tier = seedreamTier(quality)
+        const generated = await generateOpenAICompatibleImage({ provider: 'seedream', apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, size: tier, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'seedream', active.model, tier, config, exec, knownWorkspaceRoots)
+      }
+      if (active.provider === 'openai') {
+        const plan = translateOpenAICompatibleSize(active.model, ratio, quality, resolution)
+        const generated = await generateOpenAICompatibleImage({ provider: 'openai', apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, size: plan.size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'openai', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+      }
+      throw new Error('Image channel could not be resolved')
     },
     presentResult: (_args, result) => imagePresentation(result),
   }))
 
   ctx.tools.register(defineTool({
     name: 'edit_image',
-    description: 'Edit, combine, or restyle existing images with the configured provider. Images attached inline to the latest human message are already readable DSH attachments even when no workspace file exists. In that case, call edit_image immediately with prompt only; NEVER call read_image, glob, or shell to locate them, and NEVER invent @ paths. All inline images will be used in upload order. For specific older conversation images use source_attachment_id or source_attachment_ids; both canonical sha256: IDs and full bare SHA-256 digests are accepted. For files the user explicitly names in the workspace use source_path or source_paths. Provide exactly one selector field. Without a selector, images from the latest human message take priority; only when that message has no images does editing fall back to the newest conversation image.',
+    description: 'Edit, combine, or restyle existing images with the configured image channels (Google Gemini, OpenAI, Seedream, DashScope, Gitee AI, or a local ComfyUI workflow). Images attached inline to the latest human message are already readable DSH attachments even when no workspace file exists. In that case, call edit_image immediately with prompt only; NEVER call read_image, glob, or shell to locate them, and NEVER invent @ paths. All inline images will be used in upload order. For specific older conversation images use source_attachment_id or source_attachment_ids; both canonical sha256: IDs and full bare SHA-256 digests are accepted. For files the user explicitly names in the workspace use source_path or source_paths. Provide exactly one selector field. Without a selector, images from the latest human message take priority; only when that message has no images does editing fall back to the newest conversation image. Speak only aspect_ratio and quality; pass resolution only when the user demands exact pixels. Omit channel and model to use the configured default; pass model (and channel when needed) only when the user names a specific one.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'Describe the changes to make while preserving everything else that should remain.' },
       source_attachment_id: { type: 'string', description: 'Optional attachment id of a specific image already present in the current conversation.' },
       source_attachment_ids: { type: 'array', items: { type: 'string' }, description: 'Optional ordered attachment ids of multiple images already present in the current conversation. Prompt references such as image 1 and image 2 follow this order.' },
       source_path: { type: 'string', description: 'Optional absolute or workspace-relative path of a specific image file inside the active session workspace. Prefer this when the user names a saved file.' },
       source_paths: { type: 'array', items: { type: 'string' }, description: 'Optional ordered absolute or workspace-relative paths of multiple image files inside the active session workspace.' },
-      aspect_ratio: { type: 'string', enum: ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'], description: 'Optional output aspect ratio for Google Gemini.' },
-      image_size: { type: 'string', enum: ['1K', '2K', '4K'], description: 'Optional output resolution for Google Gemini.' },
-      size: { type: 'string', description: 'Optional output size for OpenAI, Seedream, or DashScope.' },
-      workflow: { type: 'string', description: 'Optional name of the ComfyUI workflow to run; omit to use the active workflow from settings. Only meaningful when the ComfyUI provider is selected.' },
+      channel: { type: 'string', description: 'Optional image channel: google, openai, seedream, dashscope, gitee, or comfyui. Omit when only one channel is configured; ambiguous calls fail with the full option list.' },
+      model: { type: 'string', description: 'Optional model on the chosen channel (for comfyui this is the workflow name). Omit when only one model is configured; ambiguous calls fail with the full option list.' },
+      aspect_ratio: { type: 'string', enum: ['auto', '1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'], description: 'Output aspect ratio. Map the user request to the nearest standard value; use auto only when they expressed none.' },
+      quality: { type: 'string', enum: ['auto', '1K', '2K', '4K'], description: 'Quality tier: 1K, 2K, 4K, or auto when the user expressed none.' },
+      resolution: { type: 'string', description: 'Optional exact pixel resolution "WxH" when the user demands specific dimensions; each channel converts it into a legal request. Prefer aspect_ratio otherwise.' },
+      workflow: { type: 'string', description: 'Legacy alias of model for the ComfyUI channel; omit to use the active workflow from settings.' },
     },
     output: imageOutput('Edited'),
     async execute(args, exec): Promise<GeneratedValue> {
-      const active = resolveProvider(current())
+      const config = current()
+      const selection = resolveAgentSelection(config, args.channel, args.model)
+      const channel = selection.channel
       const sourceImages = await resolveReferenceImages({
         ...(exec.agent === undefined ? {} : { agent: exec.agent }),
         attachments: ctx.attachments,
@@ -185,48 +235,79 @@ export function apply(ctx: Context, config: Config = {}): void {
         signal: exec.signal,
       })
 
-      if (active.provider === 'comfyui') {
+      if (channel.provider === 'comfyui') {
         if (sourceImages.length > 1) {
           throw new Error(`ComfyUI edit_image supports exactly one source image per call; this call resolved ${String(sourceImages.length)} images. Call edit_image again with source_attachment_id set to the single attachment ID of the image to edit.`)
         }
         const sourceImage = sourceImages[0]
         if (sourceImage === undefined) throw new Error('edit_image requires a reference image')
-        const workflow = selectComfyUIWorkflow(active, args.workflow)
+        const comfy = resolveProvider(channelProfile(config, channel))
+        if (comfy.provider !== 'comfyui') throw new Error('ComfyUI channel could not be resolved')
+        const workflow = selectComfyUIWorkflow(comfy, firstNonEmptyString(args.model, args.workflow))
         const generated = await editComfyUIImage({
-          baseURL: active.baseURL,
+          baseURL: comfy.baseURL,
           workflowJson: workflow.json,
           prompt: mergeComfyUIPrompt(workflow.presetPrompt, args.prompt),
           sourceImage: { data: sourceImage.data, mediaType: sourceImage.mediaType },
-          timeoutMs: active.timeoutMs,
+          timeoutMs: comfy.timeoutMs,
           maxBytes: ctx.attachments.imageLimits.maxImageBytes,
           signal: exec.signal,
         })
-        return saveGenerated(ctx, generated, active.provider, workflow.name, 'API workflow', current(), exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'comfyui', workflow.name, 'API workflow', config, exec, knownWorkspaceRoots)
       }
 
-      const credential = await ctx.credentials.resolve(credentialRef(active.apiKeyEnv))
-      if (credential === undefined || credential.value.length === 0) throw new Error(`edit_image requires the ${active.apiKeyEnv} credential; configure it in Settings > Plugins > Image generation.`)
+      const model = selection.model
+      const active = resolveProvider(channelProfile(config, channel, model))
+      if (active.provider === 'comfyui') throw new Error('ComfyUI channel could not be resolved')
+      const credentialEnv = channel.apiKeyEnv !== undefined && channel.apiKeyEnv.trim() !== '' ? channel.apiKeyEnv.trim() : active.apiKeyEnv
+      const credential = await ctx.credentials.resolve(credentialRef(credentialEnv))
+      if (credential === undefined || credential.value.length === 0) {
+        throw new Error(`${channel.label} (channel ${channel.id}) requires the ${credentialEnv} credential; configure it in Settings > Image generation.`)
+      }
+      const ratio = normalizeRatio(args.aspect_ratio)
+      const quality = normalizeQuality(args.quality)
+      const resolution = parseResolution(args.resolution)
       if (active.provider === 'google') {
-        const aspectRatio = (args.aspect_ratio ?? active.aspectRatio) as AspectRatio
-        const imageSize = (args.image_size ?? active.imageSize) as ImageSize
+        const aspectRatio = googleAspect(ratio)
+        const imageSize = googleSize(quality)
         const generated = await editGoogleImage({ apiKey: credential.value, endpoint: active.endpoint, model: active.model, prompt: args.prompt, sourceImages, aspectRatio, imageSize, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, active.provider, active.model, `${aspectRatio}, ${imageSize}`, current(), exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'google', active.model, `${aspectRatio}, ${imageSize}`, config, exec, knownWorkspaceRoots)
       }
-
-      const size = args.size ?? active.imageSize
-      if (active.provider === 'openai') {
-        const generated = await editOpenAICompatibleImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
+      if (active.provider === 'gitee') {
+        const plan = translateGiteeSize(active.model, ratio, quality, resolution)
+        const generated = await editGiteeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'gitee', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+      }
+      if (active.provider === 'modelscope') {
+        throw new Error('ModelScope 渠道暂不支持图生图（编辑协议尚未验证）；请换一个支持编辑的渠道，或反馈让我补充验证。')
+      }
+      if (active.provider === 'dashscope') {
+        const plan = translateDashScopeSize(ratio, resolution)
+        const size = plan.size ?? '1024*1024'
+        const generated = await editDashScopeImage({ apiKey: credential.value, endpoint: active.endpoint, model: active.model, prompt: args.prompt, sourceImages, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'dashscope', active.model, size, config, exec, knownWorkspaceRoots, plan.notes)
       }
       if (active.provider === 'seedream') {
-        const generated = await editSeedreamImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
+        const tier = seedreamTier(quality)
+        const generated = await editSeedreamImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, size: tier, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'seedream', active.model, tier, config, exec, knownWorkspaceRoots)
       }
-      const generated = await editDashScopeImage({ apiKey: credential.value, endpoint: active.endpoint, model: active.model, prompt: args.prompt, sourceImages, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-      return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
+      if (active.provider === 'openai') {
+        const plan = translateOpenAICompatibleSize(active.model, ratio, quality, resolution)
+        const generated = await editOpenAICompatibleImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, ...(plan.size !== undefined ? { size: plan.size } : {}), maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'openai', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+      }
+      throw new Error('Image channel could not be resolved')
     },
     presentResult: (_args, result) => imagePresentation(result),
   }))
+}
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim() !== '') return value
+  }
+  return undefined
 }
 
 function imageOutput(verb: 'Generated' | 'Edited') {
@@ -236,14 +317,15 @@ function imageOutput(verb: 'Generated' | 'Edited') {
         attachment: { type: 'object', required: true, additionalProperties: false, properties: {
           attachmentId: { type: 'string', required: true }, mediaType: { type: 'string', required: true }, bytes: { type: 'integer', required: true }, width: { type: 'integer', required: true }, height: { type: 'integer', required: true }, name: { type: 'string' }, originalDimensions: { type: 'object', additionalProperties: false, properties: { width: { type: 'integer', required: true }, height: { type: 'integer', required: true } } },
         } },
-        provider: { type: 'string', required: true }, model: { type: 'string', required: true }, output: { type: 'string', required: true }, savedTo: { type: 'string' }, saveError: { type: 'string' }, seed: { type: 'integer' },
+        provider: { type: 'string', required: true }, model: { type: 'string', required: true }, output: { type: 'string', required: true }, notes: { type: 'string' }, savedTo: { type: 'string' }, saveError: { type: 'string' }, seed: { type: 'integer' },
       },
     },
     render: (_args: unknown, value: GeneratedValue) => {
       const saved = typeof value.savedTo === 'string' ? ` It was also saved to the workspace as ${value.savedTo}.` : typeof value.saveError === 'string' ? ` Saving it to the workspace failed: ${value.saveError}.` : ' It has no local file path.'
+      const notes = typeof value.notes === 'string' && value.notes.length > 0 ? ` Size adjustments: ${value.notes}.` : ''
       const action = verb === 'Generated' ? 'It is already attached to the conversation.' : 'The edited image is attached to the conversation.'
       return [
-        { type: 'text' as const, text: `${verb} one image with ${value.provider}/${value.model} (${value.output}). Attachment ID: ${String(value.attachment.attachmentId)}. ${action}${saved} Respond to the user without reading or searching for the image.` },
+        { type: 'text' as const, text: `${verb} one image with ${value.provider}/${value.model} (${value.output}).${notes} Attachment ID: ${String(value.attachment.attachmentId)}. ${action}${saved} Respond to the user without reading or searching for the image.` },
         { type: 'image' as const, attachment: value.attachment },
       ]
     },
@@ -274,11 +356,13 @@ async function saveGenerated(
   config: Config,
   exec: { agent?: { session: { header: { cwd?: string } } }; signal: AbortSignal },
   knownRoots?: Set<string>,
+  notes?: string[],
 ): Promise<GeneratedValue> {
   if (!ctx.attachments.imageLimits.mediaTypes.includes(generated.mediaType)) throw new Error(`This DSH deployment does not accept ${generated.mediaType} generated images`)
   const attachment = await ctx.attachments.saveImage({ data: generated.data, mediaType: generated.mediaType, name: 'generated-image' })
   const value: GeneratedValue = {
     attachment, provider, model, output,
+    ...(notes !== undefined && notes.length > 0 ? { notes: notes.join('; ') } : {}),
     ...(typeof generated.seed === 'number' ? { seed: generated.seed } : {}),
   }
   if (config.saveToWorkspace === false) return value

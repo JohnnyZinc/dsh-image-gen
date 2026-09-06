@@ -5,21 +5,27 @@ import type { Context } from '@deepseek-ai/cordis'
 import {
   ASPECT_RATIOS,
   DASHSCOPE_API_KEY_ENV,
+  GITEE_API_KEY_ENV,
   GOOGLE_API_KEY_ENV,
   IMAGE_SIZES,
+  MODELSCOPE_API_KEY_ENV,
   OPENAI_API_KEY_ENV,
   SEEDREAM_API_KEY_ENV,
   resolveProvider,
+  withProviderModel,
   type AspectRatio,
   type Config,
   type ImageSize,
 } from './config.js'
 import { editDashScopeImage, generateDashScopeImage } from './dashscope.js'
+import { generateGiteeImage, editGiteeImage } from './gitee.js'
+import { generateModelScopeImage } from './modelscope.js'
 import { editGoogleImage, generateGoogleImage } from './google.js'
 import { editOpenAICompatibleImage, generateOpenAICompatibleImage } from './openai-compatible.js'
 import { editSeedreamImage } from './seedream.js'
 import {
   CLOUD_IMAGE_PROVIDERS,
+  PROVIDER_LABELS,
   type CloudImageProvider,
   type StudioConfigResponse,
   type StudioGenerateRequest,
@@ -29,19 +35,15 @@ import {
   type StudioProviderProfile,
   type StudioReference,
 } from './shared.js'
-
-const PROVIDER_LABELS: Record<CloudImageProvider, string> = {
-  google: 'Google',
-  openai: 'OpenAI',
-  seedream: 'Seedream',
-  dashscope: 'DashScope',
-}
+import { normalizeQuality, normalizeRatio, planLabel, translateGiteeSize, translateModelScopeSize } from './vocab.js'
 
 const CREDENTIALS: Record<CloudImageProvider, string> = {
   google: GOOGLE_API_KEY_ENV,
   openai: OPENAI_API_KEY_ENV,
   seedream: SEEDREAM_API_KEY_ENV,
   dashscope: DASHSCOPE_API_KEY_ENV,
+  gitee: GITEE_API_KEY_ENV,
+  modelscope: MODELSCOPE_API_KEY_ENV,
 }
 
 const RATIO_LABELS: Record<string, string> = {
@@ -80,8 +82,8 @@ export async function generateFromStudio(
 ): Promise<StudioGenerateResponse> {
   const profile = studioProfile(config, input.provider, true)
   assertAllowed(profile, input)
-  const active = resolveProvider(providerConfig(config, input.provider, input.model))
-  if (active.provider === 'comfyui') throw new Error('ComfyUI 暂未接入工作台')
+  const active = resolveProvider(withProviderModel(config, input.provider, input.model))
+  if (active.provider !== input.provider) throw new Error('Invalid cloud provider profile')
   const credential = await ctx.credentials.resolve(credentialRef(active.apiKeyEnv))
   if (credential === undefined || credential.value.trim().length === 0) {
     throw new Error(`${PROVIDER_LABELS[input.provider]} 尚未配置 API Key，请先到设置中配置`)
@@ -114,6 +116,17 @@ export async function generateFromStudio(
         ? await editOpenAICompatibleImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: input.prompt, sourceImages, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal })
         : await generateOpenAICompatibleImage({ provider: 'openai', apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: input.prompt, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal })
       output = size
+    } else if (active.provider === 'gitee') {
+      const plan = translateGiteeSize(active.model, normalizeRatio(input.ratio), normalizeQuality(input.quality), undefined)
+      generated = input.mode === 'edit'
+        ? await editGiteeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: input.prompt, sourceImages, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal })
+        : await generateGiteeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: input.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal })
+      output = planLabel(plan)
+    } else if (active.provider === 'modelscope') {
+      if (input.mode === 'edit') throw new Error('ModelScope 渠道暂不支持图生图（编辑协议尚未验证）')
+      const plan = translateModelScopeSize(normalizeRatio(input.ratio), normalizeQuality(input.quality), undefined)
+      generated = await generateModelScopeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: input.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal })
+      output = planLabel(plan)
     } else if (active.provider === 'seedream') {
       const size = input.quality
       generated = input.mode === 'edit'
@@ -231,14 +244,21 @@ export async function runPool<T>(
 }
 
 export function studioProfile(config: Config, provider: CloudImageProvider, configured: boolean): StudioProviderProfile {
-  const active = resolveProvider(providerConfig(config, provider))
-  if (active.provider === 'comfyui') throw new Error('Invalid cloud provider profile')
+  const active = resolveProvider(withProviderModel(config, provider))
+  // The string comparison covers malformed cast inputs; the typed check lets TS narrow.
+  if (active.provider === 'comfyui' || (active.provider as string) !== (provider as string)) throw new Error('Invalid cloud provider profile')
   const model = active.model
   if (provider === 'google') {
     return profile(provider, model, configured, ASPECT_RATIOS.map(option), IMAGE_SIZES.map(value => ({ value, label: value })), '1:1', '1K')
   }
   if (provider === 'openai') {
     return profile(provider, model, configured, ['1:1', '3:2', '2:3'].map(option), [{ value: 'standard', label: '标准（推荐）' }], '1:1', 'standard')
+  }
+  if (provider === 'gitee') {
+    return profile(provider, model, configured, ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'].map(option), ['1K', '2K', '4K'].map(value => ({ value, label: value })), '1:1', '1K')
+  }
+  if (provider === 'modelscope') {
+    return profile(provider, model, configured, ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'].map(option), ['1K', '2K', '4K'].map(value => ({ value, label: value })), '1:1', '1K')
   }
   if (provider === 'seedream') {
     return profile(provider, model, configured, [{ value: 'auto', label: '模型自动' }], ['1K', '2K', '4K'].map(value => ({ value, label: value })), 'auto', '2K')
@@ -270,16 +290,6 @@ function profile(
 
 function option(value: string): StudioOption {
   return { value, label: RATIO_LABELS[value] ?? value }
-}
-
-function providerConfig(config: Config, provider: CloudImageProvider, model?: string): Config {
-  if (model === undefined) return { ...config, provider }
-  switch (provider) {
-    case 'google': return { ...config, provider, googleModel: model }
-    case 'openai': return { ...config, provider, openaiModel: model }
-    case 'seedream': return { ...config, provider, seedreamModel: model }
-    case 'dashscope': return { ...config, provider, dashscopeModel: model }
-  }
 }
 
 function assertAllowed(profile: StudioProviderProfile, input: StudioGenerateRequest): void {

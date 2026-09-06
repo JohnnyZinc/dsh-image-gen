@@ -40,9 +40,10 @@ function execWithUserImages(...ids: string[]): never {
   } as never
 }
 
-function harnessContext(): { ctx: Context; tools: ToolDefinition[]; installSection: ReturnType<typeof vi.fn> } {
+function harnessContext(): { ctx: Context; tools: ToolDefinition[]; installSection: ReturnType<typeof vi.fn>; sections: Array<{ name: string; order: number; text: () => string }> } {
   const tools: ToolDefinition[] = []
   const installSection = vi.fn()
+  const sections: Array<{ name: string; order: number; text: () => string }> = []
   const ctx = {
     tools: { register: (tool: ToolDefinition) => { tools.push(tool) } },
     effect: (setup: () => unknown) => setup(),
@@ -50,6 +51,9 @@ function harnessContext(): { ctx: Context; tools: ToolDefinition[]; installSecti
     credentials: { resolve: vi.fn(async () => ({ value: 'test-key' })) },
     inject: (services: readonly string[], callback: (owner: unknown) => void) => {
       if (services.includes('settings')) callback({ settings: { installSection } })
+      if (services.includes('systemPrompt')) {
+        callback({ systemPrompt: { section: (section: { name: string; order: number; text: () => string }) => { sections.push(section); return () => {} } } })
+      }
     },
     attachments: {
       imageLimits: {
@@ -61,7 +65,7 @@ function harnessContext(): { ctx: Context; tools: ToolDefinition[]; installSecti
     },
     logger: { warn: vi.fn() },
   } as unknown as Context
-  return { ctx, tools, installSection }
+  return { ctx, tools, installSection, sections }
 }
 
 function toolByName(tools: ToolDefinition[], name: string): ToolDefinition {
@@ -130,11 +134,112 @@ describe('image tool registration', () => {
     apply(ctx, { provider: 'openai', saveToWorkspace: false })
     const edit = toolByName(tools, 'edit_image')
     const parameters = edit.parameters as { properties?: Record<string, unknown> }
-    expect(parameters.properties).toHaveProperty('size')
     expect(parameters.properties).toHaveProperty('aspect_ratio')
-    expect(parameters.properties).toHaveProperty('image_size')
+    expect(parameters.properties).toHaveProperty('quality')
+    expect(parameters.properties).toHaveProperty('resolution')
+    expect(parameters.properties).toHaveProperty('channel')
+    expect(parameters.properties).toHaveProperty('model')
     expect(parameters.properties).toHaveProperty('source_attachment_ids')
     expect(parameters.properties).toHaveProperty('source_paths')
+  })
+
+  it('silently uses the configured default model when the call names none', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('gitee').toString('base64') }] }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, { provider: 'gitee', giteeModels: ['z-image-turbo', 'z-image'], defaultChannelId: 'gitee', defaultModel: 'z-image', saveToWorkspace: false })
+
+    const value = await toolByName(tools, 'generate_image').execute(
+      { prompt: 'a poster', aspect_ratio: '3:4', quality: '1K' },
+      { signal: new AbortController().signal } as never,
+    ) as { model: string }
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({ model: 'z-image', size: '768x1024' })
+    expect(value.model).toBe('z-image')
+  })
+
+  it('errors with the option list when the named model is not configured', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, { provider: 'gitee', giteeModels: ['z-image-turbo', 'z-image'], defaultChannelId: 'gitee', defaultModel: 'z-image-turbo', saveToWorkspace: false })
+
+    await expect(toolByName(tools, 'generate_image').execute(
+      { prompt: 'a poster', aspect_ratio: '3:4', model: 'flux-1-dev' },
+      { signal: new AbortController().signal } as never,
+    )).rejects.toThrow('Unknown model "flux-1-dev" on Gitee AI. Available models: "z-image-turbo", "z-image".')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('translates gitee ratio and quality into the registered preset', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('gitee').toString('base64') }] }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, { provider: 'gitee', saveToWorkspace: false })
+
+    const value = await toolByName(tools, 'generate_image').execute(
+      { prompt: 'a poster', aspect_ratio: '3:4', quality: '1K' },
+      { signal: new AbortController().signal } as never,
+    ) as { provider: string; model: string; output: string }
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://ai.gitee.com/v1/images/generations')
+    expect(JSON.parse(String(init.body))).toMatchObject({ model: 'z-image-turbo', prompt: 'a poster', size: '768x1024' })
+    expect(value).toMatchObject({ provider: 'gitee', model: 'z-image-turbo', output: '768x1024' })
+    expect(ctx.credentials.resolve).toHaveBeenCalledWith('GITEE_API_KEY')
+  })
+
+  it('escapes to gitee width/height for exact resolutions', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('gitee').toString('base64') }] }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, { provider: 'gitee', saveToWorkspace: false })
+
+    await toolByName(tools, 'generate_image').execute(
+      { prompt: 'a poster', resolution: '864x1152' },
+      { signal: new AbortController().signal } as never,
+    )
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({ width: 864, height: 1152 })
+  })
+
+  it('routes modelscope generation through submit, poll, and download', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ task_id: 'task-9' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ task_status: 'SUCCEED', output_images: ['https://cdn.example/out.png'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([4, 5, 6]), { status: 200, headers: { 'content-type': 'image/png' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, { provider: 'modelscope', saveToWorkspace: false })
+
+    const value = await toolByName(tools, 'generate_image').execute(
+      { prompt: 'a poster', aspect_ratio: '3:4', quality: '1K' },
+      { signal: new AbortController().signal } as never,
+    ) as { provider: string; model: string; output: string }
+
+    const [submitUrl, submitInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(submitUrl).toBe('https://api-inference.modelscope.cn/v1/images/generations')
+    expect((submitInit.headers as Record<string, string>)['X-ModelScope-Async-Mode']).toBe('true')
+    expect(JSON.parse(String(submitInit.body))).toMatchObject({ model: 'Tongyi-MAI/Z-Image-Turbo', size: '768x1024' })
+    expect(value).toMatchObject({ provider: 'modelscope', output: '768x1024' })
+    expect(ctx.credentials.resolve).toHaveBeenCalledWith('MODELSCOPE_API_KEY')
+  })
+
+  it('maps google vocabulary arguments through the shared translation', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ output_image: { data: Buffer.from('google').toString('base64'), mime_type: 'image/png' } }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, { provider: 'google', saveToWorkspace: false })
+
+    await toolByName(tools, 'generate_image').execute(
+      { prompt: 'a poster', aspect_ratio: '3:4', quality: '2K' },
+      { signal: new AbortController().signal } as never,
+    )
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({ response_format: { aspect_ratio: '3:4', image_size: '2K' } })
   })
 
   it('tells the agent to use current inline attachments without workspace discovery', () => {

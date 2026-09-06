@@ -6,14 +6,21 @@ import {
   DEFAULT_COMFYUI_BASE_URL,
   DEFAULT_COMFYUI_TIMEOUT_MS,
   DEFAULT_COMFYUI_WORKFLOW_LABEL,
+  DEFAULT_GITEE_BASE_URL,
+  DEFAULT_GITEE_MODEL,
   DEFAULT_GOOGLE_ENDPOINT,
   DEFAULT_GOOGLE_MODEL,
   DEFAULT_OPENAI_BASE_URL,
   DEFAULT_OPENAI_MODEL,
   DEFAULT_SEEDREAM_BASE_URL,
   DEFAULT_SEEDREAM_MODEL,
+  agentChannels,
+  channelProfile,
+  modelOptionsFor,
+  resolveAgentSelection,
   resolveProvider,
   selectComfyUIWorkflow,
+  withProviderModel,
 } from '../src/config.js'
 import { mergeComfyUIPrompt, resolveComfyUIWorkflows, uniqueComfyUIWorkflowName } from '../src/shared.js'
 
@@ -25,6 +32,27 @@ describe('resolveProvider', () => {
   it('resolves editable OpenAI-compatible profiles independently', () => {
     expect(resolveProvider({ provider: 'openai' })).toEqual({ provider: 'openai', apiKeyEnv: 'OPENAI_API_KEY', baseURL: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL, imageSize: '1024x1024' })
     expect(resolveProvider({ provider: 'seedream' })).toEqual({ provider: 'seedream', apiKeyEnv: 'ARK_API_KEY', baseURL: DEFAULT_SEEDREAM_BASE_URL, model: DEFAULT_SEEDREAM_MODEL, imageSize: '2K' })
+  })
+
+  it('resolves the Gitee AI profile with its own credential and defaults', () => {
+    expect(resolveProvider({ provider: 'gitee' })).toEqual({
+      provider: 'gitee',
+      apiKeyEnv: 'GITEE_API_KEY',
+      baseURL: DEFAULT_GITEE_BASE_URL,
+      model: DEFAULT_GITEE_MODEL,
+      imageSize: '1024x1024',
+    })
+    expect(resolveProvider({ provider: 'gitee', giteeBaseURL: 'https://ai.gitee.com/v1', giteeModel: 'z-image' })).toMatchObject({ model: 'z-image' })
+  })
+
+  it('resolves the ModelScope profile with the org/model default', () => {
+    expect(resolveProvider({ provider: 'modelscope' })).toEqual({
+      provider: 'modelscope',
+      apiKeyEnv: 'MODELSCOPE_API_KEY',
+      baseURL: 'https://api-inference.modelscope.cn/v1',
+      model: 'Tongyi-MAI/Z-Image-Turbo',
+      imageSize: '1024x1024',
+    })
   })
 
   it('resolves DashScope profile', () => {
@@ -181,6 +209,108 @@ describe('Config Schema validation', () => {
       { name: 'b.json', json: '{}', presetPrompt: 'masterpiece' },
     ])
     expect(validated.comfyuiActiveWorkflow).toBe('a.json')
+  })
+
+  it('defaults the gitee fields and accepts model lists', () => {
+    const validated = Config({ provider: 'gitee', giteeModels: ['z-image-turbo', ' z-image ', ''] })
+    expect(validated.giteeBaseURL).toBe(DEFAULT_GITEE_BASE_URL)
+    expect(validated.giteeModel).toBe(DEFAULT_GITEE_MODEL)
+    expect(validated.giteeModels).toEqual(['z-image-turbo', ' z-image ', ''])
+  })
+})
+
+describe('agent channel and model resolution', () => {
+  it('resolves the legacy single-provider config silently to its default model', () => {
+    const channels = agentChannels({ provider: 'gitee' })
+    expect(channels).toEqual([{ id: 'gitee', provider: 'gitee', label: 'Gitee AI', models: [DEFAULT_GITEE_MODEL] }])
+    expect(resolveAgentSelection({ provider: 'gitee' }, undefined, undefined)).toEqual({
+      channel: { id: 'gitee', provider: 'gitee', label: 'Gitee AI', models: [DEFAULT_GITEE_MODEL] },
+      model: DEFAULT_GITEE_MODEL,
+    })
+    expect(resolveAgentSelection({ provider: 'gitee' }, 'gitee', undefined).model).toBe(DEFAULT_GITEE_MODEL)
+    expect(resolveAgentSelection({ provider: 'gitee' }, 'Gitee AI', undefined).model).toBe(DEFAULT_GITEE_MODEL)
+  })
+
+  it('adds every channel with an explicitly configured model list (legacy fields)', () => {
+    const config = { provider: 'gitee', giteeModels: ['z-image-turbo', 'z-image'], openaiModels: ['gpt-image-2'] }
+    const channels = agentChannels(config)
+    expect(channels.map(channel => channel.provider)).toEqual(['openai', 'gitee'])
+    expect(modelOptionsFor(config, 'gitee')).toEqual(['z-image-turbo', 'z-image'])
+  })
+
+  it('prefers declared channel instances over the legacy per-provider fields', () => {
+    const config = { channels: [
+      { id: 'gitee-main', provider: 'gitee', baseURL: 'https://ai.gitee.com/v1', models: ['z-image-turbo', 'FLUX.2-dev'] },
+      { id: 'relay-1', provider: 'openai', baseURL: 'https://relay.example/v1', models: ['gpt-image-2'] },
+    ] }
+    const channels = agentChannels(config)
+    expect(channels.map(channel => channel.id)).toEqual(['gitee-main', 'relay-1'])
+    expect(channels[0]?.label).toBe('Gitee AI')
+    expect(resolveAgentSelection(config, 'gitee-main', undefined)).toMatchObject({ channel: { id: 'gitee-main', baseURL: 'https://ai.gitee.com/v1' }, model: 'z-image-turbo' })
+    expect(resolveAgentSelection(config, 'relay-1', undefined)).toMatchObject({ channel: { id: 'relay-1' }, model: 'gpt-image-2' })
+    expect(resolveAgentSelection(config, 'openai', undefined)).toMatchObject({ channel: { id: 'relay-1' } })
+    // Model lists from legacy fields must NOT leak into declared channels.
+    expect(agentChannels({ channels: [...config.channels!, { id: 'x', provider: 'google' }], giteeModels: ['legacy'] })[0]?.models).toEqual(['z-image-turbo', 'FLUX.2-dev'])
+  })
+
+  it('offers configured ComfyUI workflows as models on the comfyui channel', () => {
+    const config = { provider: 'gitee', comfyuiWorkflows: [{ name: 'gen.json', json: '{}' }] }
+    expect(modelOptionsFor(config, 'comfyui')).toEqual(['gen.json'])
+    expect(agentChannels(config).map(channel => channel.provider)).toContain('comfyui')
+  })
+
+  it('unnamed requests fall back through default → first channel/model', () => {
+    const config = { provider: 'gitee', giteeModels: ['z-image-turbo'], openaiModels: ['gpt-image-2'] }
+    // No recorded default: the first declared channel (openai) serves.
+    expect(resolveAgentSelection(config, undefined, undefined)).toMatchObject({ channel: { id: 'openai' }, model: 'gpt-image-2' })
+    // A recorded default wins over order.
+    const withDefault = { ...config, defaultChannelId: 'gitee', defaultModel: 'z-image-turbo' }
+    expect(resolveAgentSelection(withDefault, undefined, undefined)).toMatchObject({ channel: { id: 'gitee' }, model: 'z-image-turbo' })
+    // Unknown channel name still errors with the option list.
+    expect(() => resolveAgentSelection(config, 'nope', undefined)).toThrow('Unknown image channel "nope"')
+  })
+
+  it('never silently picks between two channels when the provider name matches several', () => {
+    const config = { channels: [
+      { id: 'gitee-a', provider: 'gitee', models: ['z-image-turbo'] },
+      { id: 'gitee-b', provider: 'gitee', models: ['FLUX.2-dev'] },
+    ] }
+    expect(resolveAgentSelection(config, undefined, undefined)).toMatchObject({ channel: { id: 'gitee-a' }, model: 'z-image-turbo' })
+    expect(() => resolveAgentSelection(config, 'gitee', undefined)).toThrow('matches several channels')
+    expect(resolveAgentSelection(config, 'gitee-b', undefined)).toMatchObject({ channel: { id: 'gitee-b' }, model: 'FLUX.2-dev' })
+  })
+
+  it('naming a model switches to the channel that hosts it', () => {
+    const config = { channels: [
+      { id: 'gitee-main', provider: 'gitee', models: ['z-image-turbo'] },
+      { id: 'relay-1', provider: 'openai', models: ['gpt-image-2', 'FLUX.2-dev'] },
+    ], defaultChannelId: 'gitee-main', defaultModel: 'z-image-turbo' }
+    expect(resolveAgentSelection(config, undefined, 'FLUX.2-dev')).toMatchObject({ channel: { id: 'relay-1' }, model: 'FLUX.2-dev' })
+    // Ambiguous across channels: refuse rather than pick.
+    const split = { channels: [
+      { id: 'a', provider: 'gitee', models: ['shared-model'] },
+      { id: 'b', provider: 'openai', models: ['shared-model'] },
+    ] }
+    expect(() => resolveAgentSelection(split, undefined, 'shared-model')).toThrow('configured on several channels')
+    // Unknown name: error lists the default channel's models.
+    expect(() => resolveAgentSelection(config, undefined, 'nope')).toThrow('Unknown model "nope"')
+  })
+
+  it('errors when the resolved channel has no models', () => {
+    const config = { channels: [{ id: 'empty', provider: 'gitee', models: [] }] }
+    expect(() => resolveAgentSelection(config, undefined, undefined)).toThrow('has no models configured')
+    expect(() => resolveAgentSelection(config, 'empty', undefined)).toThrow('has no models configured')
+  })
+
+  it('pins provider and model for downstream profile resolution', () => {
+    expect(withProviderModel({ provider: 'google' }, 'gitee', 'z-image')).toMatchObject({ provider: 'gitee', giteeModel: 'z-image' })
+    expect(withProviderModel({ provider: 'google' }, 'openai')).toMatchObject({ provider: 'openai' })
+    expect(withProviderModel({ provider: 'google' }, 'comfyui', 'ignored.json')).toMatchObject({ provider: 'comfyui' })
+  })
+
+  it('derives a channel-pinned profile with endpoint override', () => {
+    expect(channelProfile({ provider: 'google' }, { provider: 'gitee', baseURL: 'https://mirror.example/v1' }, 'FLUX.2-dev')).toMatchObject({ provider: 'gitee', giteeBaseURL: 'https://mirror.example/v1', giteeModel: 'FLUX.2-dev' })
+    expect(channelProfile({ provider: 'google' }, { provider: 'gitee' }, 'z-image-turbo')).toMatchObject({ provider: 'gitee', giteeModel: 'z-image-turbo' })
   })
 })
 

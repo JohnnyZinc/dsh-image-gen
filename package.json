@@ -1,7 +1,7 @@
 {
   "name": "dsh-image-gen",
-  "version": "0.4.1",
-  "description": "Bring ChatGPT-like image generation to DeepSeek Harness — Gemini, OpenAI, Seedream, DashScope, local ComfyUI & more.",
+  "version": "0.6.1",
+  "description": "Bring ChatGPT-like image generation to DeepSeek Harness — Gemini, OpenAI, Seedream, DashScope, Gitee AI, ModelScope, local ComfyUI & more, with a shared ratio/quality vocabulary translated per channel.",
   "type": "module",
   "author": "shanliuling",
   "repository": {
@@ -81,6 +81,9 @@
     "seedream",
     "dashscope",
     "comfyui",
+    "gitee",
+    "gitee-ai",
+    "z-image",
     "local-image-generation",
     "wanx",
     "aliyun",

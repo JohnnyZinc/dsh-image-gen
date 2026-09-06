@@ -11,15 +11,17 @@ export const STUDIO_ROUTE = '/plugins/dsh-image-gen/studio'
 export const INSPIRATION_ROUTE = '/plugins/dsh-image-gen/inspiration'
 /** Browser route used for saving generated images to workspace on demand. */
 export const SAVE_WORKSPACE_ROUTE = '/plugins/dsh-image-gen/save-workspace'
+/** Same-origin route the settings card uses to discover models from a channel endpoint. */
+export const MODELS_ROUTE = '/plugins/dsh-image-gen/models'
 /** Namespace persisted through DSH Settings. */
 export const IMAGE_GENERATION_NAMESPACE = 'image-generation'
 
 /** Supported providers. */
-export const IMAGE_PROVIDERS = ['google', 'openai', 'seedream', 'dashscope', 'comfyui'] as const
+export const IMAGE_PROVIDERS = ['google', 'openai', 'seedream', 'dashscope', 'gitee', 'modelscope', 'comfyui'] as const
 export type ImageProvider = typeof IMAGE_PROVIDERS[number]
 
 /** Providers supported by the first browser workbench release. */
-export const CLOUD_IMAGE_PROVIDERS = ['google', 'openai', 'seedream', 'dashscope'] as const
+export const CLOUD_IMAGE_PROVIDERS = ['google', 'openai', 'seedream', 'dashscope', 'gitee', 'modelscope'] as const
 export type CloudImageProvider = typeof CLOUD_IMAGE_PROVIDERS[number]
 
 /** One selectable output option exposed by a provider profile. */
@@ -110,6 +112,8 @@ export const DEFAULT_GOOGLE_ENDPOINT = 'https://generativelanguage.googleapis.co
 export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1'
 export const DEFAULT_SEEDREAM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
 export const DEFAULT_DASHSCOPE_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1'
+export const DEFAULT_GITEE_BASE_URL = 'https://ai.gitee.com/v1'
+export const DEFAULT_MODELSCOPE_BASE_URL = 'https://api-inference.modelscope.cn/v1'
 export const DEFAULT_COMFYUI_BASE_URL = 'http://127.0.0.1:8188'
 export const DEFAULT_COMFYUI_TIMEOUT_MS = 300_000
 export const DEFAULT_COMFYUI_WORKFLOW_LABEL = 'API workflow'
@@ -120,6 +124,8 @@ export const DEFAULT_GOOGLE_MODEL = 'gemini-3.1-flash-image'
 export const DEFAULT_OPENAI_MODEL = 'gpt-image-2'
 export const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128'
 export const DEFAULT_DASHSCOPE_MODEL = 'qwen-image-3.0'
+export const DEFAULT_GITEE_MODEL = 'z-image-turbo'
+export const DEFAULT_MODELSCOPE_MODEL = 'Tongyi-MAI/Z-Image-Turbo'
 
 /** One named ComfyUI API-format workflow imported through settings. */
 export interface ComfyUIWorkflowEntry {
@@ -196,6 +202,8 @@ export const DEFAULT_MODELS: Record<ImageProvider, string> = {
   openai: DEFAULT_OPENAI_MODEL,
   seedream: DEFAULT_SEEDREAM_MODEL,
   dashscope: DEFAULT_DASHSCOPE_MODEL,
+  gitee: DEFAULT_GITEE_MODEL,
+  modelscope: DEFAULT_MODELSCOPE_MODEL,
   comfyui: DEFAULT_COMFYUI_WORKFLOW_LABEL,
 }
 
@@ -204,5 +212,18 @@ export const DEFAULT_BASE_URLS: Record<ImageProvider, string> = {
   openai: DEFAULT_OPENAI_BASE_URL,
   seedream: DEFAULT_SEEDREAM_BASE_URL,
   dashscope: DEFAULT_DASHSCOPE_ENDPOINT,
+  gitee: DEFAULT_GITEE_BASE_URL,
+  modelscope: DEFAULT_MODELSCOPE_BASE_URL,
   comfyui: DEFAULT_COMFYUI_BASE_URL,
+}
+
+/** Human-facing channel labels shared by the agent guidance and the Studio. */
+export const PROVIDER_LABELS: Record<ImageProvider, string> = {
+  google: 'Google',
+  openai: 'OpenAI',
+  seedream: 'Seedream',
+  dashscope: 'DashScope',
+  gitee: 'Gitee AI',
+  modelscope: 'ModelScope',
+  comfyui: 'ComfyUI',
 }
