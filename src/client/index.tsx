@@ -1,7 +1,15 @@
 import { useEffect, useState, useRef, type ChangeEvent, type FormEvent } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { SettingsScope, ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
+export interface SettingsScopeSnapshot<T> {
+  value: T | undefined
+  writable: boolean
+}
+export interface SettingsScope<T> {
+  getSnapshot(): SettingsScopeSnapshot<T>
+  subscribe(listener: () => void): () => void
+  set(field: string, value: unknown): Promise<void>
+}
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -27,7 +35,7 @@ import { validateComfyUIWorkflowJson } from '../comfyui-workflow.js'
 import { saveGalleryItem } from './gallery-store.js'
 import { GalleryViewTab, copyImageBlob, type LocaleService } from './gallery-view.js'
 import { fetchAttachmentBlob } from './image-cache.js'
-import { imageRef } from './image-ref.js'
+import { imageRef, type ToolCallBlock } from './image-ref.js'
 import { STUDIO_STYLE } from './studio-style.js'
 import { INSPIRATION_STYLE } from './inspiration-style.js'
 import {

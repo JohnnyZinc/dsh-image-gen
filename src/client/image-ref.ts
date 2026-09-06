@@ -1,6 +1,26 @@
 /** Dual-path image attachment resolution for legacy rc.2 and modern DSH runtime blocks. */
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
+
+export interface RunningToolCall {
+  callId?: string
+  name?: string
+  argsRaw?: string
+  turn?: number
+  step?: number
+  time?: number
+}
+
+export interface ToolResultNode {
+  kind?: string
+  callId?: string
+  resultView?: {
+    card?: string
+    content?: Array<{ type: string; attachment?: ImageAttachmentRef }>
+  } | null
+  content?: Array<{ type: string; attachment?: ImageAttachmentRef }>
+}
+
+export type ToolCallBlock = RunningToolCall | ToolResultNode
 
 /**
  * Extract the verified durable image attachment from a completed tool result block.
