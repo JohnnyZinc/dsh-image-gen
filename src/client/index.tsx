@@ -168,6 +168,8 @@ const DICT = {
     channelNoEndpoint: '未填写接口地址',
     keyRefMissing: '该渠道缺少凭据引用名（apiKeyEnv）',
     modelsNotLikelyImage: '该模型 ID 不像图像模型（仍可勾选）',
+    hmodelLabel: '图像',
+    hmodelTitle: '图像模型：点击切换生图默认模型',
     workflow: 'API Workflow 工作流',
     workflowImport: '导入 JSON 文件',
     workflowMissing: '尚未导入工作流',
@@ -255,6 +257,8 @@ const DICT = {
     channelNoEndpoint: 'No endpoint set',
     keyRefMissing: 'This channel has no credential reference (apiKeyEnv)',
     modelsNotLikelyImage: 'This id does not look like an image model (you can still check it)',
+    hmodelLabel: 'Image',
+    hmodelTitle: 'Image model: click to switch the generation default',
     workflow: 'API Workflows',
     workflowImport: 'Import JSON file',
     workflowMissing: 'No workflow imported',
@@ -395,6 +399,17 @@ const STYLE = `
 .dsh-ig-picker-list label{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;font-size:13px;font-weight:400;cursor:pointer}
 .dsh-ig-picker-list label:hover{background:var(--dsw-alias-bg-layer-3,#f3f4f6)}
 .dsh-ig-picker-list span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-ig-hmodel{position:relative;display:inline-flex}
+.dsh-ig-hmodel-trigger{appearance:none;border:0;background:none;font:inherit;font-size:12.5px;color:var(--dsw-alias-label-tertiary,#7b818b);cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;line-height:1.4}
+.dsh-ig-hmodel-trigger:hover{background:var(--dsw-alias-bg-layer-3,#f3f4f6);color:var(--dsw-alias-label-primary,inherit)}
+.dsh-ig-hmodel-current{font-weight:600;color:var(--dsw-alias-label-primary,inherit);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-ig-hmodel-backdrop{position:fixed;inset:0;z-index:59}
+.dsh-ig-hmodel-panel{position:absolute;top:calc(100% + 6px);right:0;min-width:230px;max-height:320px;overflow:auto;border:1px solid var(--dsw-alias-border-l2,#dfe3ea);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#172033);box-shadow:0 12px 32px rgba(11,17,29,.16);padding:6px;z-index:60}
+.dsh-ig-hmodel-group{font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary,#7b818b);padding:6px 8px 2px}
+.dsh-ig-hmodel-option{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;appearance:none;border:0;background:none;font:inherit;font-size:12.5px;color:inherit;text-align:left;cursor:pointer;padding:6px 8px;border-radius:7px}
+.dsh-ig-hmodel-option:hover{background:var(--dsw-alias-bg-layer-3,#f3f4f6)}
+.dsh-ig-hmodel-option-active{color:var(--dsw-alias-brand-primary,#3569ed);font-weight:600}
+.dsh-ig-hmodel-check{flex:none}
 .dsh-ig-error{color:var(--dsw-alias-label-error,#d33);font-size:13px}
 .dsh-ig-loading{color:var(--dsw-alias-label-tertiary,#7b818b);font-size:13px}
 
@@ -639,6 +654,14 @@ export function apply(ctx: Context): void {
       injectSettingsSection(credentials)
     })
   }
+
+  // Image-model picker beside the conversation title (session header actions):
+  // a pure client shortcut that rewrites the global default channel + model.
+  ;(ctx.slots.inject as any)('conversation.session.header.actions', () => register({
+    name: 'conversation.session.header.actions',
+    order: 500,
+    inject: (): { scope: SettingsScope<ImageSettings>; locale?: LocaleService | undefined } => ({ scope, locale }),
+  }, ImageModelPicker))
 
   // 2. Tool result view card in chat stream
   ctx.slots.inject('tool.call.toolview', () => register({
@@ -1536,6 +1559,72 @@ interface ModelPickerState {
   error: string
   models: Array<{ id: string; image: boolean }>
   checked: string[]
+}
+
+/**
+ * The conversation-header image-model picker (Plan B): a pure client shortcut
+ * that rewrites the global default channel + model through the settings scope.
+ * Session-scoped rendering means one picker per open conversation, but the
+ * selection itself is global — no session id, no host round-trip.
+ */
+function ImageModelPicker(props: { scope: SettingsScope<ImageSettings>; locale?: LocaleService | undefined }) {
+  const [snapshot, setSnapshot] = useState(() => props.scope.getSnapshot())
+  const [open, setOpen] = useState(false)
+  const lang = usePluginLanguage(props.locale)
+  useEffect(() => props.scope.subscribe(() => { setSnapshot(props.scope.getSnapshot()) }), [props.scope])
+
+  const dict = lang === 'en' ? DICT.en : DICT.zh
+  const labels: Record<Provider, string> = {
+    google: dict.providerGoogle,
+    openai: dict.providerOpenAI,
+    seedream: dict.providerSeedream,
+    dashscope: dict.providerDashScope,
+    gitee: dict.providerGitee,
+    modelscope: dict.providerModelScope,
+    comfyui: dict.providerComfyUI,
+  }
+  const drafts = channelsFromSettings(snapshot.value).filter(channel => channel.models.length > 0)
+  if (drafts.length === 0) return null
+
+  const recordedChannel = snapshot.value?.defaultChannelId ?? ''
+  const recordedModel = snapshot.value?.defaultModel ?? ''
+  const activeChannel = drafts.find(channel => channel.id === recordedChannel) ?? drafts[0]!
+  const activeModel = activeChannel.models.includes(recordedModel) ? recordedModel : activeChannel.models[0]!
+
+  return (
+    <div className="dsh-ig-hmodel">
+      <button type="button" className="dsh-ig-hmodel-trigger" title={dict.hmodelTitle} onClick={() => { setOpen(value => !value) }}>
+        <span>{dict.hmodelLabel}</span>
+        <span className="dsh-ig-hmodel-current">{activeModel}</span>
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+      </button>
+      {open ? (
+        <>
+          <div className="dsh-ig-hmodel-backdrop" onClick={() => { setOpen(false) }} />
+          <div className="dsh-ig-hmodel-panel">
+            {drafts.map(channel => (
+              <div key={channel.id}>
+                <div className="dsh-ig-hmodel-group">{labels[channel.provider]}</div>
+                {channel.models.map(model => {
+                  const active = channel.id === activeChannel.id && model === activeModel
+                  return (
+                    <button type="button" key={model} className={`dsh-ig-hmodel-option${active ? ' dsh-ig-hmodel-option-active' : ''}`} onClick={() => {
+                      void props.scope.set('defaultChannelId', channel.id)
+                      void props.scope.set('defaultModel', model)
+                      setOpen(false)
+                    }}>
+                      <span>{model}</span>
+                      {active ? <span className="dsh-ig-hmodel-check">✓</span> : null}
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
 }
 
 /** Draft channels from settings: declared instances, else one synthesized draft from the legacy per-provider fields. */
