@@ -399,17 +399,23 @@ const STYLE = `
 .dsh-ig-picker-list label{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;font-size:13px;font-weight:400;cursor:pointer}
 .dsh-ig-picker-list label:hover{background:var(--dsw-alias-bg-layer-3,#f3f4f6)}
 .dsh-ig-picker-list span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-ig-hmodel{position:relative;display:inline-flex}
-.dsh-ig-hmodel-trigger{appearance:none;border:0;background:none;font:inherit;font-size:12.5px;color:var(--dsw-alias-label-tertiary,#7b818b);cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;line-height:1.4}
-.dsh-ig-hmodel-trigger:hover{background:var(--dsw-alias-bg-layer-3,#f3f4f6);color:var(--dsw-alias-label-primary,inherit)}
-.dsh-ig-hmodel-current{font-weight:600;color:var(--dsw-alias-label-primary,inherit);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-ig-hmodel-backdrop{position:fixed;inset:0;z-index:59}
-.dsh-ig-hmodel-panel{position:absolute;top:calc(100% + 6px);right:0;min-width:230px;max-height:320px;overflow:auto;border:1px solid var(--dsw-alias-border-l2,#dfe3ea);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#172033);box-shadow:0 12px 32px rgba(11,17,29,.16);padding:6px;z-index:60}
-.dsh-ig-hmodel-group{font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary,#7b818b);padding:6px 8px 2px}
-.dsh-ig-hmodel-option{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;appearance:none;border:0;background:none;font:inherit;font-size:12.5px;color:inherit;text-align:left;cursor:pointer;padding:6px 8px;border-radius:7px}
-.dsh-ig-hmodel-option:hover{background:var(--dsw-alias-bg-layer-3,#f3f4f6)}
-.dsh-ig-hmodel-option-active{color:var(--dsw-alias-brand-primary,#3569ed);font-weight:600}
-.dsh-ig-hmodel-check{flex:none}
+.dsh-ig-hmodel{position:relative;min-width:0}
+.dsh-ig-hmodel-trigger{min-width:0;max-width:min(360px,100vw - 32px);height:28px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:0 0;border:none;border-radius:24px;outline:none;align-items:center;gap:4px;padding:0 4px 0 8px;font-size:13px;font-weight:500;line-height:20px;display:flex}
+.dsh-ig-hmodel-trigger:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-ig-hmodel-trigger:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3)}
+.dsh-ig-hmodel-triggerLabel{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}
+.dsh-ig-hmodel-chevron{color:var(--dsw-alias-label-caption);flex:none;transition:transform .12s}
+.dsh-ig-hmodel-chevronOpen{transform:rotate(180deg)}
+.dsh-ig-hmodel-menu{z-index:20;background:var(--dsw-specific-menu);width:max-content;min-width:min(240px,100vw - 32px);max-width:min(420px,100vw - 32px);max-height:min(360px,100vh - 96px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);border:0;border-radius:20px;flex-direction:column;padding:4px;display:flex;position:absolute;bottom:calc(100% + 8px);right:0;overflow:hidden}
+.dsh-ig-hmodel-groups{min-height:0;overflow-y:auto}
+.dsh-ig-hmodel-group+.dsh-ig-hmodel-group{margin-top:4px}
+.dsh-ig-hmodel-groupTitle{position:sticky;top:0;background:var(--dsw-specific-menu);color:var(--dsw-alias-label-tertiary);padding:5px 8px 3px;font-size:12px;font-weight:500;line-height:18px}
+.dsh-ig-hmodel-option{box-sizing:border-box;min-width:100%;min-height:38px;color:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:10px;outline:none;align-items:center;gap:8px;padding:6px 8px;display:flex}
+.dsh-ig-hmodel-option:hover,.dsh-ig-hmodel-option:focus-visible{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-ig-hmodel-optionCopy{flex-direction:column;flex:1;min-width:0;display:flex}
+.dsh-ig-hmodel-modelName{color:inherit;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;line-height:20px;overflow:hidden}
+.dsh-ig-hmodel-check{color:var(--dsw-alias-label-primary);flex:0 0 18px;display:grid;place-items:center}
+.dsh-ig-hmodel-backdrop{position:fixed;inset:0;z-index:19}
 .dsh-ig-error{color:var(--dsw-alias-label-error,#d33);font-size:13px}
 .dsh-ig-loading{color:var(--dsw-alias-label-tertiary,#7b818b);font-size:13px}
 
@@ -660,9 +666,9 @@ export function apply(ctx: Context): void {
   // the global default channel + model. Mirrors the registration shape of
   // dsh-client-ui-model-selection, the official contributor to these seats.
   ;(ctx.slots.inject as any)('conversation.input.left', () => {
-    console.debug('[dsh-image-gen] input.left registration factory invoked')
     return register({
       name: 'conversation.input.left',
+      id: 'dsh-image-gen-image-model-picker',
       inject: (sessionId: unknown) => ({ scope, locale }),
     }, ImageModelPicker)
   }, 'dsh-image-gen: image-model picker')
@@ -1572,7 +1578,6 @@ interface ModelPickerState {
  * selection itself is global — no session id, no host round-trip.
  */
 function ImageModelPicker(props: { scope: SettingsScope<ImageSettings>; locale?: LocaleService | undefined }) {
-  console.debug('[dsh-image-gen] picker component rendered')
   const [snapshot, setSnapshot] = useState(() => props.scope.getSnapshot())
   const [open, setOpen] = useState(false)
   const lang = usePluginLanguage(props.locale)
@@ -1599,32 +1604,33 @@ function ImageModelPicker(props: { scope: SettingsScope<ImageSettings>; locale?:
   return (
     <div className="dsh-ig-hmodel">
       <button type="button" className="dsh-ig-hmodel-trigger" title={dict.hmodelTitle} onClick={() => { setOpen(value => !value) }}>
-        <span>{dict.hmodelLabel}</span>
-        <span className="dsh-ig-hmodel-current">{activeModel}</span>
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+        <span className="dsh-ig-hmodel-triggerLabel">{dict.hmodelLabel}: {activeModel}</span>
+        <svg className={`dsh-ig-hmodel-chevron${open ? ' dsh-ig-hmodel-chevronOpen' : ''}`} width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4"/></svg>
       </button>
       {open ? (
         <>
           <div className="dsh-ig-hmodel-backdrop" onClick={() => { setOpen(false) }} />
-          <div className="dsh-ig-hmodel-panel">
-            {drafts.map(channel => (
-              <div key={channel.id}>
-                <div className="dsh-ig-hmodel-group">{labels[channel.provider]}</div>
-                {channel.models.map(model => {
-                  const active = channel.id === activeChannel.id && model === activeModel
-                  return (
-                    <button type="button" key={model} className={`dsh-ig-hmodel-option${active ? ' dsh-ig-hmodel-option-active' : ''}`} onClick={() => {
-                      void props.scope.set('defaultChannelId', channel.id)
-                      void props.scope.set('defaultModel', model)
-                      setOpen(false)
-                    }}>
-                      <span>{model}</span>
-                      {active ? <span className="dsh-ig-hmodel-check">✓</span> : null}
-                    </button>
-                  )
-                })}
-              </div>
-            ))}
+          <div className="dsh-ig-hmodel-menu">
+            <div className="dsh-ig-hmodel-groups">
+              {drafts.map(channel => (
+                <div className="dsh-ig-hmodel-group" key={channel.id}>
+                  <div className="dsh-ig-hmodel-groupTitle">{labels[channel.provider]}</div>
+                  {channel.models.map(model => {
+                    const active = channel.id === activeChannel.id && model === activeModel
+                    return (
+                      <button type="button" key={model} className={`dsh-ig-hmodel-option${active ? ' dsh-ig-hmodel-option-active' : ''}`} onClick={() => {
+                        void props.scope.set('defaultChannelId', channel.id)
+                        void props.scope.set('defaultModel', model)
+                        setOpen(false)
+                      }}>
+                        <span className="dsh-ig-hmodel-optionCopy"><span className="dsh-ig-hmodel-modelName">{model}</span></span>
+                        <span className="dsh-ig-hmodel-check">{active ? '✓' : ''}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
           </div>
         </>
       ) : null}
