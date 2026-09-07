@@ -178,7 +178,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         return saveGenerated(ctx, generated, 'gitee', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
       }
       if (active.provider === 'modelscope') {
-        const plan = translateModelScopeSize(ratio, quality, resolution)
+        const plan = translateModelScopeSize(active.model, ratio, quality, resolution)
         const generated = await generateModelScopeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
         return saveGenerated(ctx, generated, 'modelscope', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
       }

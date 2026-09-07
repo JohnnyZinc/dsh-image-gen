@@ -83,33 +83,40 @@ const noteRatioAuto = 'aspect ratio auto → channel default preset'
 // and a width/height escape hatch for exact pixel requests.
 // ---------------------------------------------------------------------------
 
-/** The 13 size presets Gitee documents for the z-image family. */
+/**
+ * The 7 base sizes, user-verified against Gitee AI (2026-09): every image
+ * model on the channel accepts exactly these, one per standard ratio.
+ * NOTE: an earlier table (with 512x512 / 1152x896 / 1360x2048-as-1K) came
+ * from a third-party single-page tool and produced errors in practice — do
+ * not reintroduce those values.
+ */
 export const GITEE_SIZE_PRESETS = [
-  '512x512', '1024x1024', '2048x2048',
-  '1152x896', '2048x1536',
-  '768x1024', '1536x2048',
-  '2048x1360', '1360x2048',
-  '1024x576', '2048x1152',
-  '576x1024', '1152x2048',
+  '1024x1024', '640x1024', '1024x640',
+  '768x1024', '1024x768',
+  '576x1024', '1024x576',
 ] as const
 
-/** z-image family wire table: ratio → [1K preset, 2K preset]. */
+/** z-image family extras: the 2K counterpart of each ratio (z-image / z-image-turbo only). */
+export const GITEE_SIZE_PRESETS_2K = [
+  '2048x2048', '1360x2048', '2048x1360',
+  '1536x2048', '2048x1536',
+  '1152x2048', '2048x1152',
+] as const
+
+/**
+ * Wire table: ratio → [1K preset, 2K preset]. The 1K column is the universal
+ * base seven (user-verified); the 2K column exists only for the z-image
+ * family — other Gitee models are served the 1K preset with a note.
+ */
 const GITEE_Z_WIRE: Record<string, [string, string]> = {
   '1:1': ['1024x1024', '2048x2048'],
-  '4:3': ['1152x896', '2048x1536'],
+  '4:3': ['1024x768', '2048x1536'],
   '3:4': ['768x1024', '1536x2048'],
-  '3:2': ['2048x1360', '2048x1360'],
-  '2:3': ['1360x2048', '1360x2048'],
+  '3:2': ['1024x640', '2048x1360'],
+  '2:3': ['640x1024', '1360x2048'],
   '16:9': ['1024x576', '2048x1152'],
   '9:16': ['576x1024', '1152x2048'],
 }
-
-/** Gitee presets whose every dimension stays within 1024 (per-model ceilings). */
-export const GITEE_SIZE_PRESETS_1024 = [
-  '512x512', '1024x1024',
-  '768x1024',
-  '1024x576', '576x1024',
-] as const
 
 /** Per-model size ceilings observed on the Gitee channel. */
 export interface GiteeModelLimits {
@@ -119,24 +126,24 @@ export interface GiteeModelLimits {
 }
 
 /**
- * Size limits per Gitee model family. Proven so far: z-image accepts up to
- * 2048 (presets + width/height 512–2048); FLUX.2-dev rejects 1536x2048 and
- * reports its width/height range as 8–1024. Unknown families fall to the
- * conservative 1024 ceiling so unverified models never see an oversized
- * request.
+ * Size limits per Gitee model family (user-verified 2026-09): z-image serves
+ * both tiers and takes width/height 512–2048; FLUX.2-dev / FLUX.2-klein-9B /
+ * GLM-Image serve only the base seven, and FLUX's width/height range is
+ * proven as 8–1024 by an upstream range error. Unknown families fall to the
+ * base seven with the conservative 8–1024 width/height range.
  */
 export function giteeModelLimits(model: string): GiteeModelLimits {
   const id = model.trim()
-  if (/^z-image(?:[-_.]|$)/i.test(id)) return { min: 512, max: 2048, presets: GITEE_SIZE_PRESETS }
-  if (/^flux/i.test(id)) return { min: 8, max: 1024, presets: GITEE_SIZE_PRESETS_1024 }
-  return { min: 8, max: 1024, presets: GITEE_SIZE_PRESETS_1024 }
+  if (/^z-image(?:[-_.]|$)/i.test(id)) return { min: 512, max: 2048, presets: [...GITEE_SIZE_PRESETS, ...GITEE_SIZE_PRESETS_2K] }
+  if (/^flux/i.test(id)) return { min: 8, max: 1024, presets: GITEE_SIZE_PRESETS }
+  return { min: 8, max: 1024, presets: GITEE_SIZE_PRESETS }
 }
 
-/** Reverse map: a Gitee wire size back to the ratio it serves. */
+/** Reverse map: a Gitee wire size back to the ratio and tier it serves. */
 export function giteeRatioOf(size: string): { ratio: Ratio; quality: Quality } {
   for (const [ratio, [oneK, twoK]] of Object.entries(GITEE_Z_WIRE)) {
     if (size === oneK) return { ratio: ratio as Ratio, quality: '1K' }
-    if (size === twoK) return { ratio: ratio as Ratio, quality: ratio === '3:2' || ratio === '2:3' ? '1K' : '2K' }
+    if (size === twoK) return { ratio: ratio as Ratio, quality: '2K' }
   }
   if ((GITEE_SIZE_PRESETS as readonly string[]).includes(size)) return { ratio: nearestGiteeRatio(size), quality: '1K' }
   return { ratio: '1:1', quality: '1K' }
@@ -210,10 +217,10 @@ function fallbackByWidthHeight(model: string, limits: GiteeModelLimits, target: 
   return widthHeightPlan(width, height, notes)
 }
 
-function presetWithin(size: string, limits: GiteeModelLimits): boolean {
+function presetWithin(size: string, limits: { min: number; max: number }): boolean {
   const parsed = parseResolution(size)
   if (parsed === undefined) return false
-  return parsed.width <= limits.max && parsed.height <= limits.max
+  return parsed.width <= limits.max && parsed.height <= limits.max && parsed.width >= limits.min && parsed.height >= limits.min
 }
 
 // ---------------------------------------------------------------------------
@@ -222,23 +229,35 @@ function presetWithin(size: string, limits: GiteeModelLimits): boolean {
 // fits that range, so the same wire table serves both channels.
 // ---------------------------------------------------------------------------
 
-const MODELSCOPE_MIN = 512
-const MODELSCOPE_MAX = 2048
+// ---------------------------------------------------------------------------
+// ModelScope (api-inference.modelscope.cn) — free-form "WxH" size strings
+// with a per-model pixel range (z-image 512–2048; FLUX 64–1024, user-verified
+// 2026-09); the shared preset vocabulary fits those ranges, so the same wire
+// table serves both channels.
+// ---------------------------------------------------------------------------
+
+/** Per-model pixel ranges on ModelScope (user-verified 2026-09). */
+function modelscopeLimits(model: string): { min: number; max: number } {
+  const id = model.trim()
+  if (/^flux/i.test(id)) return { min: 64, max: 1024 }
+  return { min: 512, max: 2048 }
+}
 
 /**
- * ModelScope channel translation. The endpoint takes `size: "WxH"` with each
- * side in 512–2048 (community-verified range), so every shared preset is legal
- * and exact resolutions pass through after a ratio-preserving fit.
+ * ModelScope channel translation. The endpoint takes `size: "WxH"` with a
+ * free-form range per model, so every shared preset is legal and exact
+ * resolutions pass through after a ratio-preserving fit.
  */
-export function translateModelScopeSize(ratio: Ratio, quality: Quality, resolution: PixelResolution | undefined): SizePlan {
+export function translateModelScopeSize(model: string, ratio: Ratio, quality: Quality, resolution: PixelResolution | undefined): SizePlan {
+  const limits = modelscopeLimits(model)
   if (resolution !== undefined) {
-    const scale = Math.min(1, MODELSCOPE_MAX / resolution.width, MODELSCOPE_MAX / resolution.height)
-    const width = Math.max(MODELSCOPE_MIN, Math.round(resolution.width * scale))
-    const height = Math.max(MODELSCOPE_MIN, Math.round(resolution.height * scale))
+    const scale = Math.min(1, limits.max / resolution.width, limits.max / resolution.height)
+    const width = Math.max(limits.min, Math.round(resolution.width * scale))
+    const height = Math.max(limits.min, Math.round(resolution.height * scale))
     const requested = `${resolution.width}x${resolution.height}`
     const notes: string[] = [`${requested} sent as ModelScope size`]
     if (width !== resolution.width || height !== resolution.height) {
-      notes.push(`fitted into ModelScope's 512–2048 range with ratio preserved → ${width}x${height}`)
+      notes.push(`fitted into ModelScope's ${String(limits.min)}–${String(limits.max)} range with ratio preserved → ${width}x${height}`)
     }
     return sizePlan(`${width}x${height}`, notes)
   }
@@ -248,22 +267,33 @@ export function translateModelScopeSize(ratio: Ratio, quality: Quality, resoluti
     // No preset for this ratio: derive free-form pixels inside the range.
     const target = ratioNumeric(ratio)
     if (target === null) return sizePlan('1024x1024', [`ratio ${ratio} could not be mapped; ModelScope default used`])
-    let width = MODELSCOPE_MAX
-    let height = Math.round(MODELSCOPE_MAX / target)
-    if (height > MODELSCOPE_MAX) {
-      height = MODELSCOPE_MAX
-      width = Math.round(MODELSCOPE_MAX * target)
+    let width = limits.max
+    let height = Math.round(limits.max / target)
+    if (height > limits.max) {
+      height = limits.max
+      width = Math.round(limits.max * target)
     }
     const notes = [`ratio ${ratio} sent as free-form ModelScope size ${width}x${height}`]
     if (quality === 'auto') notes.push(noteQualityAuto)
     return sizePlan(`${width}x${height}`, notes)
   }
   const highTier = quality === '2K' || quality === '4K'
-  const chosen = highTier ? wire[1] : wire[0]
+  const fits = presetWithin(wire[highTier ? 1 : 0]!, { min: limits.min, max: limits.max })
+  const chosen = fits ? wire[highTier ? 1 : 0]! : fitInto(wire[highTier ? 1 : 0]!, limits)
   const notes: string[] = []
   if (quality === 'auto') notes.push(noteQualityAuto)
   if (quality === '4K') notes.push(noteNoSecondTier)
+  if (!fits) notes.push(`fitted into ModelScope's ${String(limits.min)}–${String(limits.max)} range → ${chosen}`)
   return sizePlan(chosen, notes)
+}
+
+function fitInto(size: string, limits: { min: number; max: number }): string {
+  const parsed = parseResolution(size)
+  if (parsed === undefined) return `${limits.max}x${limits.max}`
+  const scale = Math.min(1, limits.max / parsed.width, limits.max / parsed.height)
+  const width = Math.max(limits.min, Math.round(parsed.width * scale))
+  const height = Math.max(limits.min, Math.round(parsed.height * scale))
+  return `${width}x${height}`
 }
 
 // ---------------------------------------------------------------------------

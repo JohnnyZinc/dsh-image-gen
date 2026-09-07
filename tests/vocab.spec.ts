@@ -83,9 +83,8 @@ describe('Gitee per-model registry translation', () => {
     expect(plan.notes.join(' ')).toContain('1024')
     // 16:9 + 2K → the ≤1024 preset.
     expect(translateGiteeSize('FLUX.2-dev', '16:9', '2K', undefined)).toMatchObject({ kind: 'size', size: '1024x576' })
-    // 3:2 has no ≤1024 preset → width/height within the ceiling, ratio preserved.
-    const wide = translateGiteeSize('FLUX.2-dev', '3:2', '1K', undefined)
-    expect(wide).toMatchObject({ kind: 'width_height', width: 1024, height: 683 })
+    // 3:2 has a base preset now (1024x640, user-verified).
+    expect(translateGiteeSize('FLUX.2-dev', '3:2', '1K', undefined)).toMatchObject({ kind: 'size', size: '1024x640' })
   })
 
   it('fits oversized exact resolutions into the model ceiling with ratio preserved', () => {
@@ -101,31 +100,38 @@ describe('Gitee per-model registry translation', () => {
   it('reverse-maps wire sizes back to ratio and tier for regeneration', () => {
     expect(giteeRatioOf('768x1024')).toEqual({ ratio: '3:4', quality: '1K' })
     expect(giteeRatioOf('2048x1152')).toEqual({ ratio: '16:9', quality: '2K' })
-    expect(giteeRatioOf('1360x2048')).toEqual({ ratio: '2:3', quality: '1K' })
+    expect(giteeRatioOf('1360x2048')).toEqual({ ratio: '2:3', quality: '2K' })
   })
 })
 
 describe('ModelScope translation', () => {
   it('maps ratio + tier through the shared preset vocabulary', () => {
-    expect(translateModelScopeSize('3:4', '1K', undefined)).toMatchObject({ kind: 'size', size: '768x1024' })
-    expect(translateModelScopeSize('16:9', '2K', undefined)).toMatchObject({ kind: 'size', size: '2048x1152' })
+    expect(translateModelScopeSize('Tongyi-MAI/Z-Image-Turbo', '3:4', '1K', undefined)).toMatchObject({ kind: 'size', size: '768x1024' })
+    expect(translateModelScopeSize('Tongyi-MAI/Z-Image-Turbo', '16:9', '2K', undefined)).toMatchObject({ kind: 'size', size: '2048x1152' })
   })
 
   it('keeps auto on the channel default with an honest note', () => {
-    const plan = translateModelScopeSize('auto', 'auto', undefined)
+    const plan = translateModelScopeSize('Tongyi-MAI/Z-Image-Turbo', 'auto', 'auto', undefined)
     expect(plan).toMatchObject({ kind: 'size', size: '1024x1024' })
     expect(plan.notes.join(' ')).toContain('auto')
   })
 
-  it('sends free-form exact resolutions, fitted into 512–2048 with ratio preserved', () => {
-    expect(translateModelScopeSize('auto', 'auto', { width: 1152, height: 1536 })).toMatchObject({ kind: 'size', size: '1152x1536' })
-    const plan = translateModelScopeSize('auto', 'auto', { width: 3000, height: 4000 })
+  it('sends free-form exact resolutions, fitted into the per-model range', () => {
+    expect(translateModelScopeSize('Tongyi-MAI/Z-Image-Turbo', 'auto', 'auto', { width: 1152, height: 1536 })).toMatchObject({ kind: 'size', size: '1152x1536' })
+    const plan = translateModelScopeSize('Tongyi-MAI/Z-Image-Turbo', 'auto', 'auto', { width: 3000, height: 4000 })
     expect(plan).toMatchObject({ kind: 'size', size: '1536x2048' })
     expect(plan.notes.join(' ')).toContain('fitted')
   })
 
+  it('caps FLUX at its verified 64–1024 range on ModelScope', () => {
+    const plan = translateModelScopeSize('FLUX.2-dev', '3:4', '2K', undefined)
+    expect(plan).toMatchObject({ kind: 'size', size: '768x1024' })
+    expect(plan.notes.join(' ')).toContain('fitted')
+    expect(translateModelScopeSize('FLUX.2-dev', 'auto', 'auto', { width: 1536, height: 2048 })).toMatchObject({ kind: 'size', size: '768x1024' })
+  })
+
   it('maps every enum ratio through a shared preset (4:3)', () => {
-    expect(translateModelScopeSize('4:3', '1K', undefined)).toMatchObject({ kind: 'size', size: '1152x896' })
+    expect(translateModelScopeSize('Tongyi-MAI/Z-Image-Turbo', '4:3', '1K', undefined)).toMatchObject({ kind: 'size', size: '1024x768' })
   })
 })
 

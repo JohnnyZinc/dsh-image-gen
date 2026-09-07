@@ -124,7 +124,7 @@ export async function generateFromStudio(
       output = planLabel(plan)
     } else if (active.provider === 'modelscope') {
       if (input.mode === 'edit') throw new Error('ModelScope 渠道暂不支持图生图（编辑协议尚未验证）')
-      const plan = translateModelScopeSize(normalizeRatio(input.ratio), normalizeQuality(input.quality), undefined)
+      const plan = translateModelScopeSize(active.model, normalizeRatio(input.ratio), normalizeQuality(input.quality), undefined)
       generated = await generateModelScopeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: input.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal })
       output = planLabel(plan)
     } else if (active.provider === 'seedream') {
