@@ -109,8 +109,8 @@ describe('DSH client compatibility', () => {
     expect(injectSettingsCard).toBeTypeOf('function')
     expect(() => injectSettingsCard?.()).not.toThrow()
     expect(harness.injectedCredentials()).toBe(credentials)
-    // The conversation-header image-model picker rides the same activation.
-    expect(harness.slotInjections.some(injection => injection.name === 'conversation.session.header.actions')).toBe(true)
+    // The composer tool-row image-model picker rides the same activation.
+    expect(harness.slotInjections.some(injection => injection.name === 'conversation.input.left')).toBe(true)
 
     await fiber.dispose()
   })

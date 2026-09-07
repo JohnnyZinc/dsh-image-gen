@@ -655,13 +655,14 @@ export function apply(ctx: Context): void {
     })
   }
 
-  // Image-model picker beside the conversation title (session header actions):
-  // a pure client shortcut that rewrites the global default channel + model.
-  ;(ctx.slots.inject as any)('conversation.session.header.actions', () => register({
-    name: 'conversation.session.header.actions',
-    order: 500,
-    inject: (): { scope: SettingsScope<ImageSettings>; locale?: LocaleService | undefined } => ({ scope, locale }),
-  }, ImageModelPicker))
+  // Image-model picker in the composer tool row (left of the row that hosts
+  // the conversation model selector): a pure client shortcut that rewrites
+  // the global default channel + model. Mirrors the registration shape of
+  // dsh-client-ui-model-selection, the official contributor to these seats.
+  ;(ctx.slots.inject as any)('conversation.input.left', () => register({
+    name: 'conversation.input.left',
+    inject: (sessionId: unknown) => ({ scope, locale }),
+  }, ImageModelPicker), 'dsh-image-gen: image-model picker')
 
   // 2. Tool result view card in chat stream
   ctx.slots.inject('tool.call.toolview', () => register({
