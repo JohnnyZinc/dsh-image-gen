@@ -4,6 +4,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   ASPECT_RATIOS,
+  ANTIGRAVITY_API_KEY_ENV,
   DASHSCOPE_API_KEY_ENV,
   GITEE_API_KEY_ENV,
   GOOGLE_API_KEY_ENV,
@@ -35,7 +36,7 @@ import {
   type StudioProviderProfile,
   type StudioReference,
 } from './shared.js'
-import { normalizeQuality, normalizeRatio, planLabel, translateGiteeSize, translateModelScopeSize } from './vocab.js'
+import { normalizeQuality, normalizeRatio, planLabel, translateAntigravitySize, translateGiteeSize, translateModelScopeSize } from './vocab.js'
 
 const CREDENTIALS: Record<CloudImageProvider, string> = {
   google: GOOGLE_API_KEY_ENV,
@@ -44,6 +45,7 @@ const CREDENTIALS: Record<CloudImageProvider, string> = {
   dashscope: DASHSCOPE_API_KEY_ENV,
   gitee: GITEE_API_KEY_ENV,
   modelscope: MODELSCOPE_API_KEY_ENV,
+  antigravity: ANTIGRAVITY_API_KEY_ENV,
 }
 
 const RATIO_LABELS: Record<string, string> = {
@@ -126,6 +128,15 @@ export async function generateFromStudio(
       if (input.mode === 'edit') throw new Error('ModelScope 渠道暂不支持图生图（编辑协议尚未验证）')
       const plan = translateModelScopeSize(active.model, normalizeRatio(input.ratio), normalizeQuality(input.quality), undefined)
       generated = await generateModelScopeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: input.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal })
+      output = planLabel(plan)
+    } else if (active.provider === 'antigravity') {
+      const plan = translateAntigravitySize(normalizeRatio(input.ratio), undefined)
+      // Antigravity's quality vocabulary is standard / medium / hd (1K/2K/4K);
+      // the Studio profile offers exactly those words.
+      const qualityWord = input.quality === 'hd' ? 'hd' : input.quality === 'medium' ? 'medium' : 'standard'
+      generated = input.mode === 'edit'
+        ? await editOpenAICompatibleImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: input.prompt, sourceImages, size: plan.size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal })
+        : await generateOpenAICompatibleImage({ provider: 'antigravity', apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: input.prompt, size: plan.size, quality: qualityWord, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal })
       output = planLabel(plan)
     } else if (active.provider === 'seedream') {
       const size = input.quality
@@ -259,6 +270,9 @@ export function studioProfile(config: Config, provider: CloudImageProvider, conf
   }
   if (provider === 'modelscope') {
     return profile(provider, model, configured, ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'].map(option), ['1K', '2K', '4K'].map(value => ({ value, label: value })), '1:1', '1K')
+  }
+  if (provider === 'antigravity') {
+    return profile(provider, model, configured, ['1:1', '4:3', '3:4', '16:9', '9:16'].map(option), [{ value: 'standard', label: '标准（1K）' }, { value: 'medium', label: '中（2K）' }, { value: 'hd', label: '高（4K）' }], '1:1', 'standard')
   }
   if (provider === 'seedream') {
     return profile(provider, model, configured, [{ value: 'auto', label: '模型自动' }], ['1K', '2K', '4K'].map(value => ({ value, label: value })), 'auto', '2K')

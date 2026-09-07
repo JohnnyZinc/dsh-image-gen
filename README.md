@@ -234,6 +234,7 @@ pnpm dsh plugin --profile web add ./dsh-image-gen
 | **Aliyun DashScope / Qwen Image** |    ✅    | ✅ 多图  |   ✅   |     ✅     |
 | **Gitee AI**                      |    ✅    | ✅ 多图  |   ✅   |     ✅     |
 | **ModelScope (魔搭)**             |    ✅    |   —     |   ✅   |     ✅     |
+| **Antigravity (Gemini 反代)**     |    ✅    | ✅ 多图  |   ✅   |     ✅     |
 | **Local ComfyUI**                 |    ✅    | ✅ 单图  |   —    |     —      |
 
 > Studio 与多模型对比目前只支持云端 Provider；多模型对比调用的是各 Provider 在设置中已配置的模型。
@@ -254,13 +255,14 @@ pnpm dsh plugin --profile web add ./dsh-image-gen
 | Aliyun DashScope   | `qwen-image-3.0`             | `https://dashscope.aliyuncs.com/api/v1`                         |
 | Gitee AI           | `z-image-turbo`              | `https://ai.gitee.com/v1`（凭据 `GITEE_API_KEY`）               |
 | ModelScope (魔搭)  | `Tongyi-MAI/Z-Image-Turbo`   | `https://api-inference.modelscope.cn/v1`（凭据 `MODELSCOPE_API_KEY`） |
+| Antigravity        | `gemini-3-pro-image`         | `http://127.0.0.1:8045/v1`（凭据 `ANTIGRAVITY_API_KEY`）        |
 | Local ComfyUI      | 用户导入的 API Workflow      | `http://127.0.0.1:8188`                                         |
 
 </details>
 
 ### 多渠道与默认模型（0.5.x–0.6.x）
 
-- 每个 Provider 都支持配置**模型列表**（`googleModels` / `openaiModels` / `seedreamModels` / `dashscopeModels` / `giteeModels` / `modelscopeModels`）。设置面板提供**「获取模型列表」**按钮：经宿主代理拉取端点的 `/models`（API Key 不出宿主；Gitee AI 与 ModelScope 的列表端点公开可用），勾选确认即用，也支持手动添加自定义模型。
+- 每个 Provider 都支持配置**模型列表**（`googleModels` / `openaiModels` / `seedreamModels` / `dashscopeModels` / `giteeModels` / `modelscopeModels` / `antigravityModels`）。设置面板提供**「获取模型列表」**按钮：经宿主代理拉取端点的 `/models`（API Key 不出宿主；Gitee AI、ModelScope 与 Antigravity 的列表端点可用），勾选确认即用，也支持手动添加自定义模型。
 - **每个渠道的模型列表用单选钮选定一个默认模型**；用户不指定渠道和模型时，生图固定走默认——**没有询问环节，也没有常驻提示词注入**，流程最短。想换模型就到设置里点另一个单选钮（配置热生效，无需重启）。
 - 点名模型仍然可用：说"用 FLUX.2-dev 画…"时，插件会自动切换到承载该模型的渠道；模型名未配置或跨渠道歧义时返回带完整选项列表的错误。
 - 设置面板同时挂载为**顶级标签页「图像生成」**（与通用设置、模型、插件、Agent 预设同级），插件页卡片保留作兜底。

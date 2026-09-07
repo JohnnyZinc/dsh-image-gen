@@ -14,19 +14,20 @@ export interface CompatibleReferenceImage {
 }
 
 export async function generateOpenAICompatibleImage(input: {
-  provider: 'openai' | 'seedream'
+  provider: 'openai' | 'seedream' | 'antigravity'
   apiKey: string
   baseURL: string
   model: string
   prompt: string
   size?: string | undefined
+  quality?: string | undefined
   maxBytes: number
   signal: AbortSignal
 }): Promise<GeneratedCompatibleImage> {
   const response = await fetch(imageEndpoint(input.baseURL, 'generations'), {
     method: 'POST', redirect: 'error', signal: input.signal,
     headers: { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model: input.model, prompt: input.prompt, ...(input.size !== undefined && input.size !== '' ? { size: input.size } : {}), ...(input.provider === 'seedream' ? { response_format: 'url' } : {}) }),
+    body: JSON.stringify({ model: input.model, prompt: input.prompt, ...(input.size !== undefined && input.size !== '' ? { size: input.size } : {}), ...(input.quality !== undefined && input.quality !== '' ? { quality: input.quality } : {}), ...(input.provider === 'seedream' ? { response_format: 'url' } : {}) }),
   })
   return parseImageResponse(response, input.provider, input)
 }
@@ -37,7 +38,7 @@ export async function editOpenAICompatibleImage(input: {
   model: string
   prompt: string
   sourceImages: CompatibleReferenceImage[]
-  size?: string
+  size?: string | undefined
   maxBytes: number
   signal: AbortSignal
 }): Promise<GeneratedCompatibleImage> {

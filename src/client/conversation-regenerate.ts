@@ -44,8 +44,8 @@ function outputSettings(provider: CloudImageProvider, output?: string | undefine
   if (provider === 'seedream') {
     return { ratio: 'auto', quality: normalized === '1K' || normalized === '4K' ? normalized : '2K' }
   }
-  if (provider === 'gitee' || provider === 'modelscope') {
-    // ModelScope shares the preset vocabulary with Gitee (same "WxH" values);
+  if (provider === 'gitee' || provider === 'modelscope' || provider === 'antigravity') {
+    // ModelScope and Antigravity share the preset vocabulary with Gitee (same "WxH" values);
     // free-form sizes reverse-map to the nearest shared ratio. Output may
     // carry translation notes after " — "; the size token comes first.
     const size = normalized.split(' — ')[0]?.trim() ?? ''

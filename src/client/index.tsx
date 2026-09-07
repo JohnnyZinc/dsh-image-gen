@@ -74,6 +74,9 @@ interface ImageSettings {
   modelscopeBaseURL?: string
   modelscopeModel?: string
   modelscopeModels?: string[]
+  antigravityBaseURL?: string
+  antigravityModel?: string
+  antigravityModels?: string[]
   defaultChannelId?: string
   defaultModel?: string
   googleModels?: string[]
@@ -125,6 +128,7 @@ const KEY_REF: Partial<Record<Provider, string>> = {
   dashscope: 'DASHSCOPE_API_KEY',
   gitee: 'GITEE_API_KEY',
   modelscope: 'MODELSCOPE_API_KEY',
+  antigravity: 'ANTIGRAVITY_API_KEY',
 }
 
 const DICT = {
@@ -138,6 +142,7 @@ const DICT = {
     providerDashScope: '阿里 DashScope (通义万相 / Qwen)',
     providerGitee: 'Gitee AI',
     providerModelScope: 'ModelScope (魔搭社区)',
+    providerAntigravity: 'Antigravity (Gemini 反代)',
     providerComfyUI: '本地 ComfyUI',
     apiKeyLabel: '{provider} API Key',
     apiKeyPlaceholder: '留空即可保留已配置的 Key',
@@ -227,6 +232,7 @@ const DICT = {
     providerDashScope: 'Aliyun DashScope (Wanx / Qwen)',
     providerGitee: 'Gitee AI',
     providerModelScope: 'ModelScope',
+    providerAntigravity: 'Antigravity (Gemini proxy)',
     providerComfyUI: 'Local ComfyUI',
     apiKeyLabel: '{provider} API Key',
     apiKeyPlaceholder: 'Leave empty to keep configured key',
@@ -782,6 +788,7 @@ export function ImageGenerationSettingsCard(props: SettingsCardProps) {
     dashscope: t('providerDashScope'),
     gitee: t('providerGitee'),
     modelscope: t('providerModelScope'),
+    antigravity: t('providerAntigravity'),
     comfyui: t('providerComfyUI'),
   }
 
@@ -843,8 +850,8 @@ export function ImageGenerationSettingsCard(props: SettingsCardProps) {
       for (const [providerKey, list] of perProvider) {
         const first = list[0]
         if (first === undefined) continue
-        const endpointKey = providerKey === 'google' ? 'googleEndpoint' : providerKey === 'openai' ? 'openaiBaseURL' : providerKey === 'seedream' ? 'seedreamBaseURL' : providerKey === 'gitee' ? 'giteeBaseURL' : providerKey === 'modelscope' ? 'modelscopeBaseURL' : 'dashscopeEndpoint'
-        const modelKey = providerKey === 'google' ? 'googleModel' : providerKey === 'openai' ? 'openaiModel' : providerKey === 'seedream' ? 'seedreamModel' : providerKey === 'gitee' ? 'giteeModel' : providerKey === 'modelscope' ? 'modelscopeModel' : 'dashscopeModel'
+        const endpointKey = providerKey === 'google' ? 'googleEndpoint' : providerKey === 'openai' ? 'openaiBaseURL' : providerKey === 'seedream' ? 'seedreamBaseURL' : providerKey === 'gitee' ? 'giteeBaseURL' : providerKey === 'modelscope' ? 'modelscopeBaseURL' : providerKey === 'antigravity' ? 'antigravityBaseURL' : 'dashscopeEndpoint'
+        const modelKey = providerKey === 'google' ? 'googleModel' : providerKey === 'openai' ? 'openaiModel' : providerKey === 'seedream' ? 'seedreamModel' : providerKey === 'gitee' ? 'giteeModel' : providerKey === 'modelscope' ? 'modelscopeModel' : providerKey === 'antigravity' ? 'antigravityModel' : 'dashscopeModel'
         const models = [...new Set(list.flatMap(channel => channel.models))]
         if (first.baseURL.trim() !== '') await props.scope.set(endpointKey, first.baseURL.trim())
         // The default model mirrors into the provider's primary field when it
@@ -1014,6 +1021,7 @@ export function ImageGenerationSettingsCard(props: SettingsCardProps) {
                       <option value="dashscope">{t('providerDashScope')}</option>
                       <option value="gitee">{t('providerGitee')}</option>
                       <option value="modelscope">{t('providerModelScope')}</option>
+                      <option value="antigravity">{t('providerAntigravity')}</option>
                       <option value="comfyui">{t('providerComfyUI')}</option>
                     </select>
                   </label>
@@ -1591,6 +1599,7 @@ function ImageModelPicker(props: { scope: SettingsScope<ImageSettings>; locale?:
     dashscope: dict.providerDashScope,
     gitee: dict.providerGitee,
     modelscope: dict.providerModelScope,
+    antigravity: dict.providerAntigravity,
     comfyui: dict.providerComfyUI,
   }
   const drafts = channelsFromSettings(snapshot.value).filter(channel => channel.models.length > 0)
@@ -1672,13 +1681,14 @@ function channelsFromSettings(value: ImageSettings | undefined): ChannelDraft[] 
 }
 
 /** The settings key holding the agent-selectable model list for one provider. */
-function modelsKeyOf(provider: Provider): 'googleModels' | 'openaiModels' | 'seedreamModels' | 'dashscopeModels' | 'giteeModels' | 'modelscopeModels' {
+function modelsKeyOf(provider: Provider): 'googleModels' | 'openaiModels' | 'seedreamModels' | 'dashscopeModels' | 'giteeModels' | 'modelscopeModels' | 'antigravityModels' {
   switch (provider) {
     case 'google': return 'googleModels'
     case 'openai': return 'openaiModels'
     case 'seedream': return 'seedreamModels'
     case 'gitee': return 'giteeModels'
     case 'modelscope': return 'modelscopeModels'
+    case 'antigravity': return 'antigravityModels'
     default: return 'dashscopeModels'
   }
 }
@@ -1690,6 +1700,6 @@ function modelsListOf(provider: Provider, value: ImageSettings | undefined): str
 }
 
 function baseURLOf(provider: Provider, value: ImageSettings | undefined): string {
-  const stored = provider === 'google' ? value?.googleEndpoint : provider === 'openai' ? value?.openaiBaseURL : provider === 'seedream' ? value?.seedreamBaseURL : provider === 'dashscope' ? value?.dashscopeEndpoint : provider === 'gitee' ? value?.giteeBaseURL : provider === 'modelscope' ? value?.modelscopeBaseURL : value?.comfyuiBaseURL
+  const stored = provider === 'google' ? value?.googleEndpoint : provider === 'openai' ? value?.openaiBaseURL : provider === 'seedream' ? value?.seedreamBaseURL : provider === 'dashscope' ? value?.dashscopeEndpoint : provider === 'gitee' ? value?.giteeBaseURL : provider === 'modelscope' ? value?.modelscopeBaseURL : provider === 'antigravity' ? value?.antigravityBaseURL : value?.comfyuiBaseURL
   return typeof stored === 'string' && stored.length > 0 ? stored : DEFAULT_BASE_URLS[provider]
 }

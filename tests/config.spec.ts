@@ -55,6 +55,20 @@ describe('resolveProvider', () => {
     })
   })
 
+  it('resolves the Antigravity profile with local proxy default', () => {
+    expect(resolveProvider({ provider: 'antigravity' })).toEqual({
+      provider: 'antigravity',
+      apiKeyEnv: 'ANTIGRAVITY_API_KEY',
+      baseURL: 'http://127.0.0.1:8045/v1',
+      model: 'gemini-3-pro-image',
+      imageSize: '1024x1024',
+    })
+    expect(resolveProvider({ provider: 'antigravity', antigravityBaseURL: 'http://localhost:8045/v1', antigravityModel: 'custom-model' })).toMatchObject({
+      baseURL: 'http://localhost:8045/v1',
+      model: 'custom-model',
+    })
+  })
+
   it('resolves DashScope profile', () => {
     expect(resolveProvider({ provider: 'dashscope' })).toEqual({
       provider: 'dashscope',

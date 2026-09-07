@@ -297,6 +297,45 @@ function fitInto(size: string, limits: { min: number; max: number }): string {
 }
 
 // ---------------------------------------------------------------------------
+// Antigravity Tools local proxy (OpenAI Images shape) — `size` carries only
+// the aspect ratio (the proxy maps any WxH onto its six-ratio set: 21:9,
+// 16:9, 9:16, 4:3, 3:4, 1:1 — note: no 2:3/3:2), while `quality` (standard /
+// medium / hd) carries the resolution tier.
+// ---------------------------------------------------------------------------
+
+/** Aspect-ratio carrier sizes: any WxH with the right shape works; these ride the shared base seven. */
+const ANTIGRAVITY_CARRIER: Record<string, string> = {
+  '1:1': '1024x1024',
+  '4:3': '1024x768',
+  '3:4': '768x1024',
+  '3:2': '1024x640',
+  '2:3': '640x1024',
+  '16:9': '1024x576',
+  '9:16': '576x1024',
+}
+
+/** Antigravity quality word for the wire (standard = 1K, medium = 2K, hd = 4K). */
+export function antigravityQuality(quality: Quality): 'standard' | 'medium' | 'hd' {
+  if (quality === '2K') return 'medium'
+  if (quality === '4K') return 'hd'
+  return 'standard'
+}
+
+export function translateAntigravitySize(ratio: Ratio, resolution: PixelResolution | undefined): SizePlan {
+  if (resolution !== undefined) {
+    // The proxy accepts any WxH and auto-maps the aspect — pass through.
+    return sizePlan(`${resolution.width}x${resolution.height}`, [`${resolution.width}x${resolution.height} sent as size (proxy maps the aspect)`])
+  }
+  if (ratio === 'auto') return sizePlan('1024x1024', [noteRatioAuto])
+  const carrier = ANTIGRAVITY_CARRIER[ratio] ?? '1024x1024'
+  const notes: string[] = []
+  if (ratio === '3:2' || ratio === '2:3') {
+    notes.push(`the Antigravity proxy's aspect set has no ${ratio}; the nearest mapped aspect is applied upstream`)
+  }
+  return sizePlan(carrier, notes)
+}
+
+// ---------------------------------------------------------------------------
 // OpenAI images API and OpenAI-compatible relays.
 // ---------------------------------------------------------------------------
 

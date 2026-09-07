@@ -21,7 +21,7 @@ import { createInspirationRoute } from './inspiration-route.js'
 import { generateFromStudio, describeStudio } from './studio.js'
 import { serveStudio } from './studio-route.js'
 import { deleteImageFromWorkspace, getDshWorkspaceRoots, getDshWorkspacesFull, saveImageToWorkspace } from './workspace-save.js'
-import { googleAspect, googleSize, normalizeQuality, normalizeRatio, parseResolution, planLabel, seedreamTier, translateDashScopeSize, translateGiteeSize, translateModelScopeSize, translateOpenAICompatibleSize } from './vocab.js'
+import { antigravityQuality, googleAspect, googleSize, normalizeQuality, normalizeRatio, parseResolution, planLabel, seedreamTier, translateAntigravitySize, translateDashScopeSize, translateGiteeSize, translateModelScopeSize, translateOpenAICompatibleSize } from './vocab.js'
 
 export { Config } from './config.js'
 export { IMAGE_ROUTE, DELETE_ROUTE, SAVE_WORKSPACE_ROUTE, imageAttachmentFromMeta } from './image-route.js'
@@ -182,6 +182,11 @@ export function apply(ctx: Context, config: Config = {}): void {
         const generated = await generateModelScopeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
         return saveGenerated(ctx, generated, 'modelscope', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
       }
+      if (active.provider === 'antigravity') {
+        const plan = translateAntigravitySize(ratio, resolution)
+        const generated = await generateOpenAICompatibleImage({ provider: 'antigravity', apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, size: plan.size, quality: antigravityQuality(quality), maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'antigravity', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+      }
       if (active.provider === 'dashscope') {
         const plan = translateDashScopeSize(ratio, resolution)
         const size = plan.size ?? '1024*1024'
@@ -291,6 +296,11 @@ export function apply(ctx: Context, config: Config = {}): void {
         const tier = seedreamTier(quality)
         const generated = await editSeedreamImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, size: tier, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
         return saveGenerated(ctx, generated, 'seedream', active.model, tier, config, exec, knownWorkspaceRoots)
+      }
+      if (active.provider === 'antigravity') {
+        const plan = translateAntigravitySize(ratio, resolution)
+        const generated = await editOpenAICompatibleImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, ...(plan.size !== undefined ? { size: plan.size } : {}), maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+        return saveGenerated(ctx, generated, 'antigravity', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
       }
       if (active.provider === 'openai') {
         const plan = translateOpenAICompatibleSize(active.model, ratio, quality, resolution)

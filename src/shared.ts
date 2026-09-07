@@ -17,11 +17,11 @@ export const MODELS_ROUTE = '/plugins/dsh-image-gen/models'
 export const IMAGE_GENERATION_NAMESPACE = 'image-generation'
 
 /** Supported providers. */
-export const IMAGE_PROVIDERS = ['google', 'openai', 'seedream', 'dashscope', 'gitee', 'modelscope', 'comfyui'] as const
+export const IMAGE_PROVIDERS = ['google', 'openai', 'seedream', 'dashscope', 'gitee', 'modelscope', 'antigravity', 'comfyui'] as const
 export type ImageProvider = typeof IMAGE_PROVIDERS[number]
 
 /** Providers supported by the first browser workbench release. */
-export const CLOUD_IMAGE_PROVIDERS = ['google', 'openai', 'seedream', 'dashscope', 'gitee', 'modelscope'] as const
+export const CLOUD_IMAGE_PROVIDERS = ['google', 'openai', 'seedream', 'dashscope', 'gitee', 'modelscope', 'antigravity'] as const
 export type CloudImageProvider = typeof CLOUD_IMAGE_PROVIDERS[number]
 
 /** One selectable output option exposed by a provider profile. */
@@ -114,6 +114,7 @@ export const DEFAULT_SEEDREAM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/
 export const DEFAULT_DASHSCOPE_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1'
 export const DEFAULT_GITEE_BASE_URL = 'https://ai.gitee.com/v1'
 export const DEFAULT_MODELSCOPE_BASE_URL = 'https://api-inference.modelscope.cn/v1'
+export const DEFAULT_ANTIGRAVITY_BASE_URL = 'http://127.0.0.1:8045/v1'
 export const DEFAULT_COMFYUI_BASE_URL = 'http://127.0.0.1:8188'
 export const DEFAULT_COMFYUI_TIMEOUT_MS = 300_000
 export const DEFAULT_COMFYUI_WORKFLOW_LABEL = 'API workflow'
@@ -126,6 +127,7 @@ export const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128'
 export const DEFAULT_DASHSCOPE_MODEL = 'qwen-image-3.0'
 export const DEFAULT_GITEE_MODEL = 'z-image-turbo'
 export const DEFAULT_MODELSCOPE_MODEL = 'Tongyi-MAI/Z-Image-Turbo'
+export const DEFAULT_ANTIGRAVITY_MODEL = 'gemini-3-pro-image'
 
 /** One named ComfyUI API-format workflow imported through settings. */
 export interface ComfyUIWorkflowEntry {
@@ -204,6 +206,7 @@ export const DEFAULT_MODELS: Record<ImageProvider, string> = {
   dashscope: DEFAULT_DASHSCOPE_MODEL,
   gitee: DEFAULT_GITEE_MODEL,
   modelscope: DEFAULT_MODELSCOPE_MODEL,
+  antigravity: DEFAULT_ANTIGRAVITY_MODEL,
   comfyui: DEFAULT_COMFYUI_WORKFLOW_LABEL,
 }
 
@@ -214,6 +217,7 @@ export const DEFAULT_BASE_URLS: Record<ImageProvider, string> = {
   dashscope: DEFAULT_DASHSCOPE_ENDPOINT,
   gitee: DEFAULT_GITEE_BASE_URL,
   modelscope: DEFAULT_MODELSCOPE_BASE_URL,
+  antigravity: DEFAULT_ANTIGRAVITY_BASE_URL,
   comfyui: DEFAULT_COMFYUI_BASE_URL,
 }
 
@@ -225,5 +229,6 @@ export const PROVIDER_LABELS: Record<ImageProvider, string> = {
   dashscope: 'DashScope',
   gitee: 'Gitee AI',
   modelscope: 'ModelScope',
+  antigravity: 'Antigravity',
   comfyui: 'ComfyUI',
 }

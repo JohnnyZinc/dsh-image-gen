@@ -227,6 +227,29 @@ describe('image tool registration', () => {
     expect(ctx.credentials.resolve).toHaveBeenCalledWith('MODELSCOPE_API_KEY')
   })
 
+  it('routes antigravity generation through local proxy with size and quality', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('png-bytes').toString('base64') }] }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, { provider: 'antigravity', saveToWorkspace: false })
+
+    const value = await toolByName(tools, 'generate_image').execute(
+      { prompt: 'a cyber landscape', aspect_ratio: '16:9', quality: '2K' },
+      { signal: new AbortController().signal } as never,
+    ) as { provider: string; model: string; output: string }
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('http://127.0.0.1:8045/v1/images/generations')
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      model: 'gemini-3-pro-image',
+      size: '1024x576',
+      quality: 'medium',
+      prompt: 'a cyber landscape',
+    })
+    expect(value).toMatchObject({ provider: 'antigravity', model: 'gemini-3-pro-image', output: '1024x576' })
+    expect(ctx.credentials.resolve).toHaveBeenCalledWith('ANTIGRAVITY_API_KEY')
+  })
+
   it('maps google vocabulary arguments through the shared translation', async () => {
     const { ctx, tools } = harnessContext()
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ output_image: { data: Buffer.from('google').toString('base64'), mime_type: 'image/png' } }), { headers: { 'content-type': 'application/json' } }))

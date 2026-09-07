@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  antigravityQuality,
   giteeRatioOf,
   googleAspect,
   googleSize,
@@ -8,6 +9,7 @@ import {
   parseResolution,
   planLabel,
   seedreamTier,
+  translateAntigravitySize,
   translateDashScopeSize,
   translateGiteeSize,
   translateModelScopeSize,
@@ -188,5 +190,20 @@ describe('DashScope, Seedream, and Google translations', () => {
     expect(planLabel({ kind: 'size', size: '768x1024', notes: [] })).toBe('768x1024')
     expect(planLabel({ kind: 'width_height', width: 864, height: 1152, notes: [] })).toBe('864x1152')
     expect(planLabel({ kind: 'omit', notes: [] })).toBe('default')
+  })
+
+  it('translates sizes and qualities for Antigravity proxy', () => {
+    expect(translateAntigravitySize('auto', undefined)).toMatchObject({ kind: 'size', size: '1024x1024' })
+    expect(translateAntigravitySize('1:1', undefined)).toMatchObject({ kind: 'size', size: '1024x1024' })
+    expect(translateAntigravitySize('3:4', undefined)).toMatchObject({ kind: 'size', size: '768x1024' })
+    expect(translateAntigravitySize('16:9', undefined)).toMatchObject({ kind: 'size', size: '1024x576' })
+    const notePlan = translateAntigravitySize('3:2', undefined)
+    expect(notePlan).toMatchObject({ kind: 'size', size: '1024x640' })
+    expect(notePlan.notes.join(' ')).toContain('3:2')
+    expect(translateAntigravitySize('auto', { width: 800, height: 600 })).toMatchObject({ kind: 'size', size: '800x600' })
+    expect(antigravityQuality('auto')).toBe('standard')
+    expect(antigravityQuality('1K')).toBe('standard')
+    expect(antigravityQuality('2K')).toBe('medium')
+    expect(antigravityQuality('4K')).toBe('hd')
   })
 })

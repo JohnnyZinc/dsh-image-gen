@@ -2,6 +2,8 @@
 import z from '@deepseek-ai/schemastery'
 
 import {
+  DEFAULT_ANTIGRAVITY_BASE_URL,
+  DEFAULT_ANTIGRAVITY_MODEL,
   DEFAULT_DASHSCOPE_ENDPOINT,
   DEFAULT_DASHSCOPE_MODEL,
   DEFAULT_COMFYUI_BASE_URL,
@@ -26,6 +28,8 @@ import {
 } from './shared.js'
 
 export {
+  DEFAULT_ANTIGRAVITY_BASE_URL,
+  DEFAULT_ANTIGRAVITY_MODEL,
   DEFAULT_DASHSCOPE_ENDPOINT,
   DEFAULT_DASHSCOPE_MODEL,
   DEFAULT_COMFYUI_BASE_URL,
@@ -64,6 +68,8 @@ export const DASHSCOPE_API_KEY_ENV = 'DASHSCOPE_API_KEY'
 export const GITEE_API_KEY_ENV = 'GITEE_API_KEY'
 /** ModelScope (api-inference.modelscope.cn) credential reference. */
 export const MODELSCOPE_API_KEY_ENV = 'MODELSCOPE_API_KEY'
+/** Antigravity Tools local proxy credential reference. */
+export const ANTIGRAVITY_API_KEY_ENV = 'ANTIGRAVITY_API_KEY'
 
 /** Google tool-level controls. */
 export const ASPECT_RATIOS = ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'] as const
@@ -98,6 +104,12 @@ export interface Config {
   giteeModels?: string[]
   /** Extra agent-selectable models on the ModelScope channel. */
   modelscopeModels?: string[]
+  /** Antigravity Tools local proxy endpoint. */
+  antigravityBaseURL?: string
+  /** Model on the Antigravity channel. */
+  antigravityModel?: string
+  /** Extra agent-selectable models on the Antigravity channel. */
+  antigravityModels?: string[]
   comfyuiBaseURL?: string
   /** Named ComfyUI workflows managed by the Web settings page. */
   comfyuiWorkflows?: ComfyUIWorkflowEntry[]
@@ -163,6 +175,9 @@ export const Config: z<Config> = z.object({
   modelscopeBaseURL: z.string().default(DEFAULT_MODELSCOPE_BASE_URL),
   modelscopeModel: z.string().default(DEFAULT_MODELSCOPE_MODEL),
   modelscopeModels: z.array(z.string()).default([]),
+  antigravityBaseURL: z.string().default(DEFAULT_ANTIGRAVITY_BASE_URL),
+  antigravityModel: z.string().default(DEFAULT_ANTIGRAVITY_MODEL),
+  antigravityModels: z.array(z.string()).default([]),
   comfyuiBaseURL: z.string().default(DEFAULT_COMFYUI_BASE_URL),
   comfyuiWorkflows: z.array(z.object({ name: z.string(), json: z.string(), presetPrompt: z.string().default('') })).default([]),
   comfyuiActiveWorkflow: z.string().default(''),
@@ -181,6 +196,7 @@ export function resolveProvider(config: Config):
   | { provider: 'dashscope'; apiKeyEnv: string; model: string; endpoint: string; imageSize: string }
   | { provider: 'gitee'; apiKeyEnv: string; model: string; baseURL: string; imageSize: string }
   | { provider: 'modelscope'; apiKeyEnv: string; model: string; baseURL: string; imageSize: string }
+  | { provider: 'antigravity'; apiKeyEnv: string; model: string; baseURL: string; imageSize: string }
   | { provider: 'comfyui'; baseURL: string; workflows: ComfyUIWorkflowEntry[]; workflow?: ComfyUIWorkflowEntry; timeoutMs: number } {
   switch (config.provider ?? 'google') {
     case 'openai': return { provider: 'openai', apiKeyEnv: OPENAI_API_KEY_ENV, model: config.openaiModel ?? DEFAULT_OPENAI_MODEL, baseURL: config.openaiBaseURL ?? DEFAULT_OPENAI_BASE_URL, imageSize: '1024x1024' }
@@ -188,6 +204,7 @@ export function resolveProvider(config: Config):
     case 'dashscope': return { provider: 'dashscope', apiKeyEnv: DASHSCOPE_API_KEY_ENV, model: config.dashscopeModel ?? DEFAULT_DASHSCOPE_MODEL, endpoint: config.dashscopeEndpoint ?? DEFAULT_DASHSCOPE_ENDPOINT, imageSize: '1024*1024' }
     case 'gitee': return { provider: 'gitee', apiKeyEnv: GITEE_API_KEY_ENV, model: config.giteeModel ?? DEFAULT_GITEE_MODEL, baseURL: config.giteeBaseURL ?? DEFAULT_GITEE_BASE_URL, imageSize: '1024x1024' }
     case 'modelscope': return { provider: 'modelscope', apiKeyEnv: MODELSCOPE_API_KEY_ENV, model: config.modelscopeModel ?? DEFAULT_MODELSCOPE_MODEL, baseURL: config.modelscopeBaseURL ?? DEFAULT_MODELSCOPE_BASE_URL, imageSize: '1024x1024' }
+    case 'antigravity': return { provider: 'antigravity', apiKeyEnv: ANTIGRAVITY_API_KEY_ENV, model: config.antigravityModel ?? DEFAULT_ANTIGRAVITY_MODEL, baseURL: config.antigravityBaseURL ?? DEFAULT_ANTIGRAVITY_BASE_URL, imageSize: '1024x1024' }
     case 'comfyui': {
       const workflows = resolveComfyUIWorkflows(config)
       const workflow = activeComfyUIWorkflow(config)
@@ -281,6 +298,7 @@ export function modelOptionsFor(config: Config, provider: ImageProvider): string
     case 'dashscope': { const list = cleanList(config.dashscopeModels); return list.length > 0 ? list : [config.dashscopeModel ?? DEFAULT_DASHSCOPE_MODEL] }
     case 'gitee': { const list = cleanList(config.giteeModels); return list.length > 0 ? list : [config.giteeModel ?? DEFAULT_GITEE_MODEL] }
     case 'modelscope': { const list = cleanList(config.modelscopeModels); return list.length > 0 ? list : [config.modelscopeModel ?? DEFAULT_MODELSCOPE_MODEL] }
+    case 'antigravity': { const list = cleanList(config.antigravityModels); return list.length > 0 ? list : [config.antigravityModel ?? DEFAULT_ANTIGRAVITY_MODEL] }
     case 'comfyui': return resolveComfyUIWorkflows(config).map(entry => entry.name)
   }
 }
@@ -293,6 +311,7 @@ function channelExplicitlyConfigured(config: Config, provider: ImageProvider): b
     case 'dashscope': return cleanList(config.dashscopeModels).length > 0
     case 'gitee': return cleanList(config.giteeModels).length > 0
     case 'modelscope': return cleanList(config.modelscopeModels).length > 0
+    case 'antigravity': return cleanList(config.antigravityModels).length > 0
     case 'comfyui': return resolveComfyUIWorkflows(config).length > 0
   }
 }
@@ -424,6 +443,7 @@ export function withProviderModel(config: Config, provider: ImageProvider, model
     case 'dashscope': return { ...config, provider, dashscopeModel: model }
     case 'gitee': return { ...config, provider, giteeModel: model }
     case 'modelscope': return { ...config, provider, modelscopeModel: model }
+    case 'antigravity': return { ...config, provider, antigravityModel: model }
     case 'comfyui': return { ...config, provider }
   }
 }
@@ -440,6 +460,7 @@ export function channelProfile(config: Config, channel: { provider: ImageProvide
     case 'dashscope': return { ...base, dashscopeEndpoint: endpoint }
     case 'gitee': return { ...base, giteeBaseURL: endpoint }
     case 'modelscope': return { ...base, modelscopeBaseURL: endpoint }
+    case 'antigravity': return { ...base, antigravityBaseURL: endpoint }
     case 'comfyui': return { ...base, comfyuiBaseURL: endpoint }
   }
 }

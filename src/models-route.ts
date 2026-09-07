@@ -7,7 +7,7 @@
  * workflows managed directly in the card.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { DASHSCOPE_API_KEY_ENV, GITEE_API_KEY_ENV, MODELSCOPE_API_KEY_ENV, OPENAI_API_KEY_ENV, SEEDREAM_API_KEY_ENV, type ImageProvider } from './config.js'
+import { ANTIGRAVITY_API_KEY_ENV, DASHSCOPE_API_KEY_ENV, GITEE_API_KEY_ENV, MODELSCOPE_API_KEY_ENV, OPENAI_API_KEY_ENV, SEEDREAM_API_KEY_ENV, type ImageProvider } from './config.js'
 import { MODELS_ROUTE } from './shared.js'
 
 export { MODELS_ROUTE } from './shared.js'
@@ -21,6 +21,7 @@ const PROVIDER_CREDENTIALS: Partial<Record<ImageProvider, string>> = {
   dashscope: DASHSCOPE_API_KEY_ENV,
   gitee: GITEE_API_KEY_ENV,
   modelscope: MODELSCOPE_API_KEY_ENV,
+  antigravity: ANTIGRAVITY_API_KEY_ENV,
 }
 
 /** Conservative naming heuristic that flags likely image-generation models. */
