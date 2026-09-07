@@ -18,6 +18,8 @@ const host: UserConfig = {
   fixedExtension: false,
   dts: false,
   clean: false,
+  // sharp is a native host dependency resolved from node_modules at runtime; never bundle it.
+  external: ['sharp'],
 }
 
 const client: UserConfig = {

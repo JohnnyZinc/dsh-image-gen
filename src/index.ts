@@ -20,6 +20,7 @@ import { IMAGE_GENERATION_NAMESPACE, INSPIRATION_ROUTE, STUDIO_ROUTE, mergeComfy
 import { createInspirationRoute } from './inspiration-route.js'
 import { generateFromStudio, describeStudio } from './studio.js'
 import { serveStudio } from './studio-route.js'
+import { toPng } from './png.js'
 import { deleteImageFromWorkspace, getDshWorkspaceRoots, getDshWorkspacesFull, saveImageToWorkspace } from './workspace-save.js'
 import { antigravityQuality, googleAspect, googleSize, normalizeQuality, normalizeRatio, parseResolution, planLabel, seedreamTier, translateAntigravitySize, translateDashScopeSize, translateGiteeSize, translateModelScopeSize, translateOpenAICompatibleSize } from './vocab.js'
 
@@ -368,8 +369,13 @@ async function saveGenerated(
   knownRoots?: Set<string>,
   notes?: string[],
 ): Promise<GeneratedValue> {
-  if (!ctx.attachments.imageLimits.mediaTypes.includes(generated.mediaType)) throw new Error(`This DSH deployment does not accept ${generated.mediaType} generated images`)
-  const attachment = await ctx.attachments.saveImage({ data: generated.data, mediaType: generated.mediaType, name: 'generated-image' })
+  // Persist every channel's output as a uniform PNG so downstream files match
+  // (JPEG/WebP returned by some proxies are re-encoded to PNG here).
+  const png = await toPng(generated.data, generated.mediaType)
+  const data = png.data
+  const mediaType = png.mediaType
+  if (!ctx.attachments.imageLimits.mediaTypes.includes(mediaType)) throw new Error(`This DSH deployment does not accept ${mediaType} generated images`)
+  const attachment = await ctx.attachments.saveImage({ data, mediaType, name: 'generated-image' })
   const value: GeneratedValue = {
     attachment, provider, model, output,
     ...(notes !== undefined && notes.length > 0 ? { notes: notes.join('; ') } : {}),
@@ -380,7 +386,7 @@ async function saveGenerated(
   if (workspaceRoot === undefined) return value
   knownRoots?.add(workspaceRoot)
   try {
-    value.savedTo = await saveImageToWorkspace({ workspaceRoot, folder: config.workspaceFolder, attachmentId: attachment.attachmentId, mediaType: generated.mediaType, data: generated.data, signal: exec.signal })
+    value.savedTo = await saveImageToWorkspace({ workspaceRoot, folder: config.workspaceFolder, attachmentId: attachment.attachmentId, mediaType, data, signal: exec.signal })
   } catch (error) {
     exec.signal.throwIfAborted()
     ctx.logger.warn(`dsh-image-gen: failed to save image to workspace: ${error instanceof Error ? error.message : String(error)}`)

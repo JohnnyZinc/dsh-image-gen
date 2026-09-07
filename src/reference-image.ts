@@ -299,7 +299,7 @@ function mergeSelectors(input: {
   return input.multiple
 }
 
-function detectImageMediaType(data: Uint8Array): ImageMediaType | undefined {
+export function detectImageMediaType(data: Uint8Array): ImageMediaType | undefined {
   if (startsWith(data, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png'
   if (startsWith(data, [0xff, 0xd8, 0xff])) return 'image/jpeg'
   if (ascii(data, 0, 6) === 'GIF87a' || ascii(data, 0, 6) === 'GIF89a') return 'image/gif'

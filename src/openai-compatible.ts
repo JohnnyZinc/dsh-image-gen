@@ -1,5 +1,6 @@
 /** OpenAI Images API and compatible response adapter. */
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
+import { detectImageMediaType } from './reference-image.js'
 
 const ERROR_LIMIT = 4096
 
@@ -74,7 +75,11 @@ export async function parseImageResponse(
   try { payload = JSON.parse(text) } catch { throw new Error(`${provider} image request returned invalid JSON`) }
   const image = firstImage(payload)
   if (image === undefined) throw new Error(`${provider} image request returned no image: ${text.slice(0, ERROR_LIMIT)}`)
-  if (image.b64_json !== undefined) return { data: decodeBase64(image.b64_json, provider), mediaType: imageMediaType(image.mime_type) ?? 'image/png' }
+  if (image.b64_json !== undefined) {
+    const data = decodeBase64(image.b64_json, provider)
+    const detected = detectImageMediaType(data)
+    return { data, mediaType: detected ?? imageMediaType(image.mime_type) ?? 'image/png' }
+  }
   return downloadImage(image.url, provider, input)
 }
 
@@ -107,16 +112,20 @@ async function downloadImage(
   if (url.startsWith('data:')) {
     const parsed = parseDataUrl(url)
     if (parsed === undefined) throw new Error(`${provider} image request returned invalid data URL`)
-    return { data: decodeBase64(parsed.base64, provider), mediaType: imageMediaType(parsed.mediaType) ?? 'image/png' }
+    const data = decodeBase64(parsed.base64, provider)
+    const detected = detectImageMediaType(data)
+    return { data, mediaType: detected ?? imageMediaType(parsed.mediaType) ?? 'image/png' }
   }
   const response = await fetch(url, {
     redirect: 'follow', signal: input.signal,
     ...(input.apiKey === undefined ? {} : { headers: { authorization: `Bearer ${input.apiKey}` } }),
   })
   if (!response.ok) throw new Error(`${provider} image download failed (${response.status})`)
-  const mediaType = imageMediaType(response.headers.get('content-type'))
+  const data = await readBoundedBytes(response, input.maxBytes)
+  const detected = detectImageMediaType(data)
+  const mediaType = detected ?? imageMediaType(response.headers.get('content-type'))
   if (mediaType === undefined) throw new Error(`${provider} image download returned unsupported content type`)
-  return { data: await readBoundedBytes(response, input.maxBytes), mediaType }
+  return { data, mediaType }
 }
 
 function parseDataUrl(value: string): { mediaType: string; base64: string } | undefined {
