@@ -659,10 +659,13 @@ export function apply(ctx: Context): void {
   // the conversation model selector): a pure client shortcut that rewrites
   // the global default channel + model. Mirrors the registration shape of
   // dsh-client-ui-model-selection, the official contributor to these seats.
-  ;(ctx.slots.inject as any)('conversation.input.left', () => register({
-    name: 'conversation.input.left',
-    inject: (sessionId: unknown) => ({ scope, locale }),
-  }, ImageModelPicker), 'dsh-image-gen: image-model picker')
+  ;(ctx.slots.inject as any)('conversation.input.left', () => {
+    console.debug('[dsh-image-gen] input.left registration factory invoked')
+    return register({
+      name: 'conversation.input.left',
+      inject: (sessionId: unknown) => ({ scope, locale }),
+    }, ImageModelPicker)
+  }, 'dsh-image-gen: image-model picker')
 
   // 2. Tool result view card in chat stream
   ctx.slots.inject('tool.call.toolview', () => register({
@@ -1569,6 +1572,7 @@ interface ModelPickerState {
  * selection itself is global — no session id, no host round-trip.
  */
 function ImageModelPicker(props: { scope: SettingsScope<ImageSettings>; locale?: LocaleService | undefined }) {
+  console.debug('[dsh-image-gen] picker component rendered')
   const [snapshot, setSnapshot] = useState(() => props.scope.getSnapshot())
   const [open, setOpen] = useState(false)
   const lang = usePluginLanguage(props.locale)
