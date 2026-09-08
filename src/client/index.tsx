@@ -17,24 +17,12 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import {
   CLOUD_IMAGE_PROVIDERS,
-  DEFAULT_BASE_URLS,
-  DEFAULT_COMFYUI_TIMEOUT_MS,
-  DEFAULT_COMFYUI_BASE_URL,
-  DEFAULT_MODELS,
   IMAGE_GENERATION_NAMESPACE,
-  IMAGE_PROVIDERS,
-  IMAGE_ROUTE,
-  MAX_COMFYUI_WORKFLOW_BYTES,
-  MODELS_ROUTE,
   STUDIO_ROUTE,
-  activeComfyUIWorkflow,
-  resolveComfyUIWorkflows,
-  uniqueComfyUIWorkflowName,
   type ComfyUIWorkflowEntry,
   type ImageProvider,
   type StudioGenerateResponse,
 } from '../shared.js'
-import { validateComfyUIWorkflowJson } from '../comfyui-workflow.js'
 import { saveGalleryItem } from './gallery-store.js'
 import { GalleryViewTab, copyImageBlob, type LocaleService } from './gallery-view.js'
 import { fetchAttachmentBlob } from './image-cache.js'
@@ -54,6 +42,8 @@ import {
   type ConversationImageRevisionChain,
 } from './conversation-image-revisions.js'
 import { conversationRegenerateRequest } from './conversation-regenerate.js'
+import { ImageGenerationSettingsCard } from './settings-card.js'
+import { ImageModelPicker } from './settings-card.js'
 
 type Provider = ImageProvider
 interface ImageSettings {
@@ -121,16 +111,6 @@ interface ModernUiConversation {
   events: { register(definition: ReturnType<typeof createImageResultDefinition>): () => void }
 }
 
-const KEY_REF: Partial<Record<Provider, string>> = {
-  google: 'GEMINI_API_KEY',
-  openai: 'OPENAI_API_KEY',
-  seedream: 'ARK_API_KEY',
-  dashscope: 'DASHSCOPE_API_KEY',
-  gitee: 'GITEE_API_KEY',
-  modelscope: 'MODELSCOPE_API_KEY',
-  antigravity: 'ANTIGRAVITY_API_KEY',
-}
-
 const DICT = {
   zh: {
     title: '图像生成',
@@ -162,8 +142,8 @@ const DICT = {
     modelsCustomPlaceholder: '自定义模型 ID',
     modelsAdd: '添加',
     modelsListEmpty: '列表为空：该渠道将无法参与生图。',
-    modelsListHint: '点击"获取模型列表"在弹窗中勾选并确认，或手动添加；单选钮选定默认模型——用户不指定时，生图固定走它。',
-    modelsDefaultTitle: '设为默认模型（不指定渠道和模型时使用）',
+    modelsListHint: '点击"获取模型列表"在弹窗中勾选并确认，或手动添加。默认模型在对话输入框的"图像"按钮里切换。',
+    modelsDefaultTitle: '默认模型在对话输入框的"图像"按钮里设置',
     modelsPickerTitle: '选择模型',
     modelsPickerHint: '勾选要启用的模型，确认后加入列表；再次获取可调整。',
     confirm: '确认',
@@ -252,8 +232,8 @@ const DICT = {
     modelsCustomPlaceholder: 'Custom model id',
     modelsAdd: 'Add',
     modelsListEmpty: 'Empty: this channel cannot serve generation.',
-    modelsListHint: 'Click "Fetch models", check entries in the dialog and confirm — or add custom ids by hand. The radio picks the default model: unnamed requests always use it.',
-    modelsDefaultTitle: 'Set as the default model (used when the request names none)',
+    modelsListHint: 'Click "Fetch models", check entries in the dialog and confirm — or add custom ids by hand. Switch the default model from the "Image" button in the conversation composer.',
+    modelsDefaultTitle: 'Set the default model from the "Image" button in the conversation composer',
     modelsPickerTitle: 'Select models',
     modelsPickerHint: 'Check the models to enable and confirm; fetch again to adjust.',
     confirm: 'Confirm',
@@ -587,6 +567,150 @@ const STYLE = `
 :has(> [data-conversation-scroll]:has(.dsh-ig-gallery-page)) > [class*="widthHandle"],
 :has(.dsh-ig-gallery-page) [class*="widthHandle"],
 .root:has(.dsh-ig-gallery-page) [class*="widthHandle"]{display:none!important}
+
+/* =========================================================================
+   Settings page — image generation
+   Visual & structural layout modeled after DeepSeek Harness's official
+   "Models" settings section (packages/client/ui-settings-models).
+   Every color goes through '--dsw-alias-*' tokens so light/dark themes
+   stay consistent. Bare '--border' / '--surface' / '--text-*' names
+   don't exist here, so we never write literal colors.
+   ========================================================================= */
+
+.dsh-ig-section{display:flex;flex-direction:column;gap:12px;max-width:720px;color:var(--dsw-alias-label-primary,#172033)}
+.dsh-ig-title{margin:0;font-size:16px;line-height:24px;font-weight:500;color:var(--dsw-alias-label-primary,#172033)}
+.dsh-ig-intro{margin:0;font-size:14px;line-height:22px;color:var(--dsw-alias-label-tertiary,#5b6473)}
+.dsh-ig-notice{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-label,#a15c00)}
+.dsh-ig-savedNotice{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-success-primary,#0f7b3a)}
+.dsh-ig-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#c4361a)}
+
+.dsh-ig-rows{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.dsh-ig-rowCard{border:0.5px solid var(--dsw-alias-border-l4,#d7dce5);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:12px;background:var(--dsw-alias-bg-layer-1,#fff)}
+.dsh-ig-rowHead{display:flex;align-items:center;gap:10px}
+.dsh-ig-rowIdentity{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.dsh-ig-rowName{font-size:14px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary,#172033)}
+.dsh-ig-rowTag{flex:none;padding:1px 6px;border:0.5px solid var(--dsw-alias-border-l3,#c8d0dd);border-radius:4px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#475569)}
+.dsh-ig-credentialDot{box-sizing:border-box;display:inline-block;flex:none;width:8px;height:8px;border-radius:50%}
+.dsh-ig-credentialDotConfigured{background:var(--dsw-alias-state-success-primary,#16a34a)}
+.dsh-ig-credentialDotMissing{background:var(--dsw-alias-state-error-primary,#dc2626)}
+.dsh-ig-rowActions{display:inline-flex;align-items:center;gap:4px;margin-left:auto}
+
+.dsh-ig-primaryButton,.dsh-ig-secondaryButton,.dsh-ig-addButton,.dsh-ig-addModelButton,.dsh-ig-linkButton{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;font:inherit;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s}
+.dsh-ig-primaryButton{height:36px;padding:0 14px;border:none;border-radius:18px;background:var(--dsw-alias-button-primary-fill,#2563eb);color:var(--dsw-alias-label-primary-foreground,#fff);font-size:14px;line-height:22px}
+.dsh-ig-primaryButton:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#1d4ed8)}
+.dsh-ig-secondaryButton{height:36px;padding:0 14px;border:0.5px solid var(--dsw-alias-border-l3,#c8d0dd);border-radius:18px;background:transparent;color:var(--dsw-alias-label-primary,#172033);font-size:14px;line-height:22px}
+.dsh-ig-secondaryButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid,rgba(47,100,245,.07))}
+.dsh-ig-dangerButton{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 14px;border:none;border-radius:18px;background:transparent;color:var(--dsw-alias-state-error-primary,#dc2626);font:inherit;font-size:14px;line-height:22px;cursor:pointer}
+.dsh-ig-dangerButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger,rgba(220,38,38,.08))}
+
+.dsh-ig-rowActions .dsh-ig-secondaryButton,.dsh-ig-rowActions .dsh-ig-dangerButton{height:28px;padding:0 10px;border-radius:14px;font-size:12px;line-height:18px}
+.dsh-ig-primaryButton:disabled,.dsh-ig-secondaryButton:disabled,.dsh-ig-dangerButton:disabled,.dsh-ig-addButton:disabled,.dsh-ig-linkButton:disabled,.dsh-ig-addModelButton:disabled{opacity:.4;cursor:default}
+.dsh-ig-primaryButton:focus-visible,.dsh-ig-secondaryButton:focus-visible,.dsh-ig-dangerButton:focus-visible,.dsh-ig-addButton:focus-visible,.dsh-ig-linkButton:focus-visible,.dsh-ig-addModelButton:focus-visible,.dsh-ig-iconButton:focus-visible,.dsh-ig-customizedSummary:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-alias-border-l3,#c8d0dd)}
+
+.dsh-ig-editor{border-radius:12px;background:var(--dsw-alias-bg-module-platform,#f3f5f9);padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+.dsh-ig-editorHeader{display:flex;align-items:baseline;gap:8px}
+.dsh-ig-editorTitle{font-size:14px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary,#172033)}
+.dsh-ig-editorRoute{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#5b6473)}
+.dsh-ig-field{display:flex;flex-direction:column;gap:6px}
+.dsh-ig-fieldLabel{display:inline-flex;align-items:center;gap:10px;font-size:12px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-secondary,#475569)}
+.dsh-ig-advancedHint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#5b6473)}
+.dsh-ig-editorActions{display:flex;justify-content:flex-end;gap:8px}
+
+.dsh-ig-linkButton{height:28px;padding:0 10px;border:none;border-radius:14px;background:transparent;color:var(--dsw-alias-label-tertiary,#5b6473);font-size:12px;line-height:18px}
+.dsh-ig-linkButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(15,23,42,.05));color:var(--dsw-alias-label-secondary,#475569)}
+
+.dsh-ig-addBlock{display:flex;flex-direction:column;gap:12px}
+.dsh-ig-addActions{display:flex;flex-wrap:wrap;gap:10px}
+.dsh-ig-addButton{flex:1 1 0;min-width:180px;gap:6px;height:44px;border:1px dashed var(--dsw-alias-border-l3,#c8d0dd);border-radius:16px;background:transparent;color:var(--dsw-alias-label-primary,#172033);font-size:14px;line-height:22px;justify-content:center}
+.dsh-ig-addButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(15,23,42,.04))}
+
+/* Provider add dropdown menu (a plain list, since "add" is the only affordance). */
+.dsh-ig-addMenu{position:relative;flex:1 1 0;min-width:180px;display:flex}
+.dsh-ig-addMenu .dsh-ig-addButton{width:100%}
+.dsh-ig-addMenuBackdrop{position:fixed;inset:0;z-index:30}
+.dsh-ig-addMenuList{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:31;background:var(--dsw-specific-menu,#fff);border-radius:14px;box-shadow:var(--dsw-elevation-prominent,0 12px 28px rgba(11,17,29,.18));padding:6px;display:flex;flex-direction:column;gap:2px}
+.dsh-ig-addMenuItem{appearance:none;border:0;background:transparent;text-align:left;padding:8px 12px;border-radius:8px;cursor:pointer;font:inherit;font-size:13px;color:var(--dsw-alias-label-primary,#172033);display:flex;align-items:center;justify-content:space-between;gap:12px}
+.dsh-ig-addMenuItem:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(15,23,42,.05))}
+.dsh-ig-addMenuRoute{color:var(--dsw-alias-label-tertiary,#5b6473);font-size:11px;font-family:var(--ds-font-family-code,monospace)}
+
+.dsh-ig-customized{border-top:0.5px solid var(--dsw-alias-border-l2,#e5e7eb);padding-top:10px}
+.dsh-ig-customizedSummary{display:flex;align-items:center;gap:6px;width:fit-content;padding:2px 4px;margin-left:-4px;border-radius:6px;cursor:pointer;font-size:12px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-secondary,#475569);list-style:none;background:transparent;border:0}
+.dsh-ig-customizedSummary::before{content:'';width:5px;height:5px;border-right:1.5px solid currentcolor;border-bottom:1.5px solid currentcolor;transform:rotate(-45deg) translate(-1px,-1px);transition:transform .12s}
+.dsh-ig-customizedSummary[aria-expanded="true"]::before{transform:rotate(45deg) translate(-1px,-1px)}
+.dsh-ig-customizedSummary:hover{color:var(--dsw-alias-label-primary,#172033)}
+.dsh-ig-customizedBody{display:flex;flex-direction:column;gap:12px;padding-top:12px}
+
+.dsh-ig-endpointGroup{display:flex;align-items:center;gap:8px}
+.dsh-ig-endpointGroup .dsh-ig-input{flex:1 1 auto}
+.dsh-ig-endpointReset{height:32px;padding:0 12px;font-size:12.5px;line-height:18px}
+
+.dsh-ig-input{box-sizing:border-box;width:100%;height:32px;padding:0 10px;border:0.5px solid var(--dsw-alias-border-l4,#d7dce5);border-radius:8px;font:inherit;font-size:14px;line-height:22px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#172033)}
+.dsh-ig-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#2563eb)}
+.dsh-ig-input::placeholder{color:var(--dsw-alias-label-dimmed,#9aa3b3)}
+.dsh-ig-input:disabled{opacity:.6;cursor:default}
+
+.dsh-ig-modelCatalog{display:flex;flex-direction:column;gap:10px;padding-top:12px;border-top:0.5px solid var(--dsw-alias-border-l2,#e5e7eb)}
+.dsh-ig-modelCatalogHeading{display:flex;flex-direction:column;gap:2px}
+.dsh-ig-modelCatalogTitle{font-size:12px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-secondary,#475569)}
+.dsh-ig-modelCatalogMeta{margin:0;color:var(--dsw-alias-label-tertiary,#5b6473);font-size:12px;line-height:18px}
+.dsh-ig-modelListHead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.dsh-ig-modelEmpty{margin:0;padding:12px;border:1px dashed var(--dsw-alias-border-l3,#c8d0dd);border-radius:8px;text-align:center;color:var(--dsw-alias-label-tertiary,#5b6473);font-size:12px;line-height:18px}
+.dsh-ig-modelList{display:flex;flex-direction:column;gap:8px}
+.dsh-ig-modelEntry{border:0.5px solid var(--dsw-alias-border-l4,#d7dce5);border-radius:10px;padding:6px}
+.dsh-ig-modelRow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto auto;align-items:center;gap:6px}
+.dsh-ig-modelNameDisplay{background:transparent;border-color:transparent;color:var(--dsw-alias-label-tertiary,#5b6473);font-family:var(--ds-font-family-code,monospace);font-size:12px;overflow-wrap:anywhere}
+.dsh-ig-iconButton{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary,#5b6473);cursor:pointer}
+.dsh-ig-iconButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(15,23,42,.05));color:var(--dsw-alias-label-primary,#172033)}
+.dsh-ig-iconButton:disabled{cursor:default;opacity:.4}
+.dsh-ig-iconButtonDanger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger,rgba(220,38,38,.08));color:var(--dsw-alias-state-error-primary,#dc2626)}
+.dsh-ig-addModelButton{align-self:flex-start;height:28px;padding:0 10px;border:0.5px solid var(--dsw-alias-border-l3,#c8d0dd);border-radius:14px;background:transparent;color:var(--dsw-alias-label-primary,#172033);font-size:12px;line-height:18px}
+.dsh-ig-addModelButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(15,23,42,.05))}
+
+.dsh-ig-fileRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dsh-ig-fileRow input[type=file]{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.dsh-ig-fileName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary,#475569);font-size:12px}
+.dsh-ig-workflowList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.dsh-ig-workflowRow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:auto auto;gap:6px;padding:8px;border:0.5px solid var(--dsw-alias-border-l4,#d7dce5);border-radius:8px;align-items:center}
+.dsh-ig-workflowActive{display:inline-flex;align-items:center;cursor:pointer;flex:none}
+.dsh-ig-workflowActive input[type=radio]{width:15px;height:15px;accent-color:var(--dsw-alias-brand-primary,#2563eb);margin:0;cursor:pointer}
+.dsh-ig-workflowPreset{grid-column:1 / -1;font-size:12px}
+
+.dsh-ig-candidateToolbar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.dsh-ig-candidateSearch{min-width:0;flex:1 1 240px}
+.dsh-ig-candidateList{display:flex;flex-direction:column;gap:2px;max-height:320px;margin:0;overflow-y:auto;padding:0;list-style:none}
+.dsh-ig-candidate{border-radius:6px}
+.dsh-ig-candidateLabel{display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer}
+.dsh-ig-candidateLabel:hover{background:var(--dsw-alias-bg-layer-2,rgba(15,23,42,.04))}
+.dsh-ig-candidateId{flex:1 1 auto;font-family:var(--ds-font-family-code,monospace);font-size:13px;overflow-wrap:anywhere}
+.dsh-ig-candidateEmpty{margin:24px 0;color:var(--dsw-alias-label-secondary,#475569);font-size:13px;line-height:20px;text-align:center}
+
+/* Workspace section */
+.dsh-ig-workspace{display:flex;flex-direction:column;gap:12px;max-width:720px;margin-top:24px;padding-top:16px;border-top:0.5px solid var(--dsw-alias-border-l2,#e5e7eb)}
+.dsh-ig-workspaceBody{display:flex;flex-direction:column;gap:10px;background:var(--dsw-alias-bg-layer-2,#f8fafc);border:0.5px solid var(--dsw-alias-border-l4,#d7dce5);border-radius:12px;padding:14px 16px}
+.dsh-ig-checkRow{display:flex;align-items:center;gap:8px;cursor:pointer}
+.dsh-ig-checkRow input[type=checkbox]{width:15px;height:15px;accent-color:var(--dsw-alias-brand-primary,#2563eb);margin:0}
+.dsh-ig-workspaceActions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:6px}
+.dsh-ig-workspaceMessage{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#5b6473)}
+
+/* Modal — generic dialog used for delete-confirm and the fetch-models picker. */
+.dsh-ig-modal-backdrop{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(11,17,29,.55);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);animation:dsh-ig-fade .15s ease-out}
+.dsh-ig-modal-box{width:100%;max-width:480px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#dfe3ea);border-radius:14px;padding:18px 20px;box-sizing:border-box;color:var(--dsw-alias-label-primary,#172033);box-shadow:0 24px 72px rgba(11,17,29,.28);animation:dsh-ig-scale-up .15s ease-out;display:flex;flex-direction:column;gap:14px}
+@keyframes dsh-ig-scale-up{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}
+.dsh-ig-modal-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.dsh-ig-modal-title{font-size:15px;font-weight:600;line-height:1.4}
+.dsh-ig-modal-body{padding:0}
+.dsh-ig-modal-desc{margin:0;color:var(--dsw-alias-label-tertiary,#5b6473);font-size:13px;line-height:1.55}
+.dsh-ig-modal-footer{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding-top:6px}
+.dsh-ig-modal-btn{height:34px;padding:0 14px;border-radius:8px;font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s}
+.dsh-ig-modal-btn-cancel{background:transparent;border:1px solid var(--dsw-alias-border-l2,#dfe3ea);color:var(--dsw-alias-label-primary,#172033)}
+.dsh-ig-modal-btn-cancel:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,#f3f5f9)}
+.dsh-ig-modal-btn-primary{background:var(--dsw-alias-button-primary-fill,#2563eb);border:1px solid var(--dsw-alias-button-primary-fill,#2563eb);color:#fff}
+.dsh-ig-modal-btn-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#1d4ed8);border-color:var(--dsw-alias-button-primary-hover,#1d4ed8)}
+.dsh-ig-modal-btn-danger{background:transparent;border:1px solid var(--dsw-alias-state-error-primary,#dc2626);color:var(--dsw-alias-state-error-primary,#dc2626)}
+.dsh-ig-modal-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger,rgba(220,38,38,.08))}
+.dsh-ig-modal-btn:disabled{opacity:.5;cursor:not-allowed}
+
+@media (prefers-reduced-motion: reduce){.dsh-ig-customizedSummary::before{transition:none}}
 `
 
 
@@ -740,431 +864,6 @@ function credentialsFromLegacyConnection(value: unknown): CredentialsRemote | un
         : { ok: false, error: response.result.error }
     },
   }
-}
-
-/** Edit provider settings and its write-only API credential. */
-export function ImageGenerationSettingsCard(props: SettingsCardProps) {
-  const [snapshot, setSnapshot] = useState(() => props.scope.getSnapshot())
-  const [lang, setLang] = useState(() => (props.locale?.getSnapshot?.()?.active?.startsWith('en') ? 'en' : 'zh'))
-  const [channels, setChannels] = useState<ChannelDraft[]>([])
-  const [defaultChannelId, setDefaultChannelId] = useState('')
-  const [defaultModel, setDefaultModel] = useState('')
-  const [customByChannel, setCustomByChannel] = useState<Record<string, string>>({})
-  const [picker, setPicker] = useState<ModelPickerState | null>(null)
-  const [comfyBaseURL, setComfyBaseURL] = useState(DEFAULT_COMFYUI_BASE_URL)
-  const [workflows, setWorkflows] = useState<ComfyUIWorkflowEntry[]>([])
-  const [activeWorkflow, setActiveWorkflow] = useState('')
-  const [timeoutSeconds, setTimeoutSeconds] = useState(DEFAULT_COMFYUI_TIMEOUT_MS / 1000)
-  const [saveToWorkspace, setSaveToWorkspace] = useState(true)
-  const [workspaceFolder, setWorkspaceFolder] = useState('dsh-image-gen')
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [messageIsError, setMessageIsError] = useState(false)
-  const reportMessage = (text: string): void => { setMessage(text); setMessageIsError(false) }
-  const reportError = (text: string): void => { setMessage(text); setMessageIsError(true) }
-
-  useEffect(() => props.scope.subscribe(() => { setSnapshot(props.scope.getSnapshot()) }), [props.scope])
-  useEffect(() => {
-    return props.locale?.subscribe?.(() => {
-      setLang(props.locale?.getSnapshot?.()?.active?.startsWith('en') ? 'en' : 'zh')
-    })
-  }, [props.locale])
-
-  const t = (keyName: DictKey, params?: Record<string, string>): string => {
-    const dict = lang === 'en' ? DICT.en : DICT.zh
-    let text: string = dict[keyName] || DICT.zh[keyName] || keyName
-    if (params) {
-      for (const [k, v] of Object.entries(params)) {
-        text = text.replace(`{${k}}`, v)
-      }
-    }
-    return text
-  }
-
-  const providerLabels: Record<Provider, string> = {
-    google: t('providerGoogle'),
-    openai: t('providerOpenAI'),
-    seedream: t('providerSeedream'),
-    dashscope: t('providerDashScope'),
-    gitee: t('providerGitee'),
-    modelscope: t('providerModelScope'),
-    antigravity: t('providerAntigravity'),
-    comfyui: t('providerComfyUI'),
-  }
-
-  useEffect(() => {
-    const value = snapshot.value
-    setChannels(channelsFromSettings(value))
-    setDefaultChannelId(value?.defaultChannelId ?? '')
-    setDefaultModel(value?.defaultModel ?? '')
-    setCustomByChannel({})
-    setPicker(null)
-    setComfyBaseURL(value?.comfyuiBaseURL ?? DEFAULT_COMFYUI_BASE_URL)
-    setWorkflows(resolveComfyUIWorkflows(value ?? {}))
-    setActiveWorkflow(activeComfyUIWorkflow(value ?? {})?.name ?? '')
-    setTimeoutSeconds(Math.max(1, Math.round((value?.comfyuiTimeoutMs ?? DEFAULT_COMFYUI_TIMEOUT_MS) / 1000)))
-    setSaveToWorkspace(value?.saveToWorkspace ?? true)
-    setWorkspaceFolder(value?.workspaceFolder ?? 'dsh-image-gen')
-  }, [snapshot])
-
-  const save = async (event: FormEvent): Promise<void> => {
-    event.preventDefault(); setSaving(true); setMessage('')
-    try {
-      // Channel instances are the agent's whole channel universe. There is
-      // deliberately no default model: ambiguous tool calls are refused and
-      // the agent asks the user instead.
-      const stored = channels.map(channel => ({
-        id: channel.id,
-        provider: channel.provider,
-        baseURL: channel.baseURL.trim(),
-        apiKeyEnv: channel.apiKeyEnv.trim(),
-        models: [...new Set(channel.models)],
-      }))
-      await props.scope.set('channels', stored)
-      // Default model: the radio pick must point at a live channel/model pair;
-      // drift (deleted entries) falls back to the first available.
-      let fixedChannelId = defaultChannelId
-      let fixedModel = defaultModel
-      const defaultDraft = channels.find(channel => channel.id === defaultChannelId)
-      if (defaultDraft === undefined) {
-        fixedChannelId = channels[0]?.id ?? ''
-        fixedModel = channels[0]?.models[0] ?? ''
-      } else if (!defaultDraft.models.includes(defaultModel)) {
-        fixedModel = defaultDraft.models[0] ?? ''
-      }
-      if (fixedChannelId !== defaultChannelId) setDefaultChannelId(fixedChannelId)
-      if (fixedModel !== defaultModel) setDefaultModel(fixedModel)
-      await props.scope.set('defaultChannelId', fixedChannelId)
-      await props.scope.set('defaultModel', fixedModel)
-      if (stored.length > 0 && stored[0] !== undefined) {
-        const defaultProvider = channels.find(channel => channel.id === fixedChannelId)?.provider ?? stored[0].provider
-        await props.scope.set('provider', defaultProvider)
-      }
-      // Legacy per-provider mirror keeps the Studio workbench functional.
-      const perProvider = new Map<Provider, ChannelDraft[]>()
-      for (const channel of channels) {
-        const list = perProvider.get(channel.provider) ?? []
-        list.push(channel)
-        perProvider.set(channel.provider, list)
-      }
-      for (const [providerKey, list] of perProvider) {
-        const first = list[0]
-        if (first === undefined) continue
-        const endpointKey = providerKey === 'google' ? 'googleEndpoint' : providerKey === 'openai' ? 'openaiBaseURL' : providerKey === 'seedream' ? 'seedreamBaseURL' : providerKey === 'gitee' ? 'giteeBaseURL' : providerKey === 'modelscope' ? 'modelscopeBaseURL' : providerKey === 'antigravity' ? 'antigravityBaseURL' : 'dashscopeEndpoint'
-        const modelKey = providerKey === 'google' ? 'googleModel' : providerKey === 'openai' ? 'openaiModel' : providerKey === 'seedream' ? 'seedreamModel' : providerKey === 'gitee' ? 'giteeModel' : providerKey === 'modelscope' ? 'modelscopeModel' : providerKey === 'antigravity' ? 'antigravityModel' : 'dashscopeModel'
-        const models = [...new Set(list.flatMap(channel => channel.models))]
-        if (first.baseURL.trim() !== '') await props.scope.set(endpointKey, first.baseURL.trim())
-        // The default model mirrors into the provider's primary field when it
-        // lives on this provider; otherwise the first model stands in (Studio).
-        const defaultProvider = channels.find(channel => channel.id === fixedChannelId)?.provider
-        const mirrorModel = defaultProvider === providerKey && fixedModel !== '' && models.includes(fixedModel) ? fixedModel : models[0]
-        if (mirrorModel !== undefined && mirrorModel !== '') await props.scope.set(modelKey, mirrorModel)
-        await props.scope.set(modelsKeyOf(providerKey), models)
-      }
-      // Freshly typed keys travel through credentials/set under the channel's ref.
-      for (const channel of channels) {
-        if (channel.keyInput.trim() === '') continue
-        const keyRef = channel.apiKeyEnv.trim() !== '' ? channel.apiKeyEnv.trim() : KEY_REF[channel.provider]
-        if (keyRef === undefined || keyRef === '') throw new Error(t('keyRefMissing'))
-        const response = await props.credentials.set(keyRef, channel.keyInput.trim())
-        if (!response.ok) throw new Error(response.error?.message ?? 'Failed to save API key')
-      }
-      setChannels(current => current.map(channel => ({ ...channel, keyInput: '' })))
-      // ComfyUI (workflow channel) — same semantics as before.
-      const entries = workflows.map(entry => ({ name: entry.name.trim(), json: entry.json, presetPrompt: (entry.presetPrompt ?? '').trim() }))
-      for (const entry of entries) {
-        if (entry.name.length === 0) throw new Error(t('workflowNameRequired'))
-        validateComfyUIWorkflowJson(entry.json)
-      }
-      if (new Set(entries.map(entry => entry.name)).size !== entries.length) throw new Error(t('workflowDuplicateName'))
-      const activeEntry = entries.find(entry => entry.name === activeWorkflow) ?? entries[0]
-      await props.scope.set('comfyuiBaseURL', comfyBaseURL)
-      await props.scope.set('comfyuiWorkflows', entries)
-      await props.scope.set('comfyuiActiveWorkflow', activeEntry === undefined ? '' : activeEntry.name)
-      await props.scope.set('comfyuiWorkflowJson', activeEntry === undefined ? '' : activeEntry.json)
-      await props.scope.set('comfyuiWorkflowName', activeEntry === undefined ? '' : activeEntry.name)
-      await props.scope.set('comfyuiTimeoutMs', Math.max(1, Math.round(timeoutSeconds)) * 1000)
-      await props.scope.set('saveToWorkspace', saveToWorkspace)
-      await props.scope.set('workspaceFolder', workspaceFolder.trim())
-      reportMessage(t('saved'))
-    } catch (cause) { reportError(cause instanceof Error ? cause.message : String(cause)) } finally { setSaving(false) }
-  }
-
-  const workflowStatus = activeWorkflow.length > 0 ? t('workflowImported', { name: activeWorkflow }) : t('workflowMissing')
-
-  const updateChannel = (id: string, patch: Partial<ChannelDraft>): void => {
-    setChannels(current => current.map(channel => channel.id === id ? { ...channel, ...patch } : channel))
-  }
-
-  const addChannel = (): void => {
-    const id = `ch-${Date.now().toString(36)}`
-    setChannels(current => [...current, { id, provider: 'gitee', baseURL: DEFAULT_BASE_URLS.gitee, apiKeyEnv: '', models: [], keyInput: '', open: true }])
-  }
-
-  const removeChannel = (id: string): void => {
-    setChannels(current => current.filter(channel => channel.id !== id))
-  }
-
-  const addCustomModel = (channelId: string): void => {
-    const id = (customByChannel[channelId] ?? '').trim()
-    if (id === '') return
-    setChannels(current => current.map(channel => channel.id === channelId && !channel.models.includes(id) ? { ...channel, models: [...channel.models, id] } : channel))
-    setCustomByChannel(current => ({ ...current, [channelId]: '' }))
-  }
-
-  /** Open the picker modal: fetch the endpoint's models through the host proxy (uses the stored credential, or the key typed in the card). */
-  const openPicker = async (channel: ChannelDraft): Promise<void> => {
-    setPicker({ channelId: channel.id, provider: channel.provider, baseURL: channel.baseURL, apiKey: channel.keyInput.trim(), loading: true, error: '', models: [], checked: [...channel.models] })
-    try {
-      const response = await fetch(MODELS_ROUTE, {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider: channel.provider, baseURL: channel.baseURL, apiKey: channel.keyInput.trim() }),
-      })
-      const body = await response.json() as { ok: boolean; models?: Array<{ id: string; image: boolean }>; error?: string }
-      if (!body.ok || body.models === undefined) throw new Error(body.error ?? `HTTP ${String(response.status)}`)
-      const sorted = [...body.models].sort((a, b) => (a.image === b.image ? a.id.localeCompare(b.id) : a.image ? -1 : 1))
-      setPicker(current => current === null || current.channelId !== channel.id ? current : { ...current, loading: false, models: sorted })
-    } catch (cause) {
-      setPicker(current => current === null || current.channelId !== channel.id ? current : { ...current, loading: false, error: cause instanceof Error ? cause.message : String(cause) })
-    }
-  }
-
-  const pickerToggle = (id: string): void => {
-    setPicker(current => current === null ? current : { ...current, checked: current.checked.includes(id) ? current.checked.filter(entry => entry !== id) : [...current.checked, id] })
-  }
-
-  /** Confirm the picker: the checked set becomes the channel list; custom ids outside the fetched set survive. */
-  const pickerConfirm = (): void => {
-    if (picker === null) return
-    const fetched = new Set(picker.models.map(entry => entry.id))
-    setChannels(current => current.map(channel => channel.id === picker.channelId ? { ...channel, models: [...new Set([...picker.checked, ...channel.models.filter(id => !fetched.has(id))])] } : channel))
-    setPicker(null)
-  }
-
-  const importWorkflow = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (file === undefined) return
-    reportMessage('')
-    try {
-      if (file.size > MAX_COMFYUI_WORKFLOW_BYTES) throw new Error(t('workflowTooLarge'))
-      const json = await file.text()
-      validateComfyUIWorkflowJson(json)
-      const name = uniqueComfyUIWorkflowName(file.name, workflows.map(entry => entry.name))
-      setWorkflows(current => [...current, { name, json }])
-      setActiveWorkflow(current => current.length > 0 ? current : name)
-      reportMessage(t('workflowImported', { name }))
-    } catch (cause) {
-      reportError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }
-
-  /** Renaming the active entry keeps the active selection following its new name. */
-  const renameWorkflow = (index: number, name: string): void => {
-    const previous = workflows[index]
-    setWorkflows(current => current.map((entry, position) => position === index ? { ...entry, name } : entry))
-    if (previous !== undefined && previous.name === activeWorkflow) setActiveWorkflow(name)
-  }
-
-  /** Removing the active entry moves the selection to the first remaining workflow. */
-  const removeWorkflow = (index: number): void => {
-    const previous = workflows[index]
-    const next = workflows.filter((_entry, position) => position !== index)
-    setWorkflows(next)
-    if (previous !== undefined && previous.name === activeWorkflow) setActiveWorkflow(next[0]?.name ?? '')
-  }
-
-  /** Editing one entry's preset leaves the rest of the entry untouched. */
-  const setWorkflowPreset = (index: number, presetPrompt: string): void => {
-    setWorkflows(current => current.map((entry, position) => position === index ? { ...entry, presetPrompt } : entry))
-  }
-
-  const content = (
-    <>
-      <form className="dsh-ig-body" onSubmit={(event) => { void save(event) }}>
-          <div className="dsh-ig-channel dsh-ig-channel-open">
-            <div className="dsh-ig-channel-body">
-              <label className="dsh-ig-check-row">
-                <input type="checkbox" checked={saveToWorkspace} onChange={event => { setSaveToWorkspace(event.target.checked) }} />
-                <span className="dsh-ig-label">{t('saveToWorkspace')}</span>
-              </label>
-              {saveToWorkspace ? (
-                <label className="dsh-ig-field">
-                  <span className="dsh-ig-label">{t('folder')}</span>
-                  <input className="dsh-ig-input" value={workspaceFolder} onChange={event => { setWorkspaceFolder(event.target.value) }} placeholder="dsh-image-gen" />
-                  <span className="dsh-ig-hint">{t('folderHint')}</span>
-                </label>
-              ) : null}
-              <div className="dsh-ig-actions">
-                <p className={`dsh-ig-status${messageIsError ? ' dsh-ig-status-error' : ''}`} role="status">{message}</p>
-                <button className="dsh-ig-save" type="submit" disabled={saving || !snapshot.writable}>{saving ? t('saving') : t('save')}</button>
-              </div>
-            </div>
-          </div>
-          {channels.map(channel => (
-            <div className={`dsh-ig-channel${channel.open ? ' dsh-ig-channel-open' : ''}`} key={channel.id}>
-              <button type="button" className="dsh-ig-channel-head" onClick={() => { updateChannel(channel.id, { open: !channel.open }) }}>
-                <span className="dsh-ig-channel-title">{providerLabels[channel.provider]}</span>
-                <span className="dsh-ig-channel-meta">{channel.baseURL !== '' ? channel.baseURL : t('channelNoEndpoint')} · {t('channelModels', { count: String(channel.models.length) })}</span>
-                <span className={`dsh-ig-chevron ${channel.open ? 'dsh-ig-chevron-open' : ''}`} aria-hidden="true">
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4"/></svg>
-                </span>
-              </button>
-              {channel.open ? (
-                <div className="dsh-ig-channel-body">
-                  <label className="dsh-ig-field">
-                    <span className="dsh-ig-label">{t('provider')}</span>
-                    <select className="dsh-ig-input" value={channel.provider} onChange={event => { const next = event.target.value as Provider; updateChannel(channel.id, { provider: next, baseURL: next === 'comfyui' ? DEFAULT_COMFYUI_BASE_URL : DEFAULT_BASE_URLS[next], models: [], keyInput: '' }) }}>
-                      <option value="google">{t('providerGoogle')}</option>
-                      <option value="openai">{t('providerOpenAI')}</option>
-                      <option value="seedream">{t('providerSeedream')}</option>
-                      <option value="dashscope">{t('providerDashScope')}</option>
-                      <option value="gitee">{t('providerGitee')}</option>
-                      <option value="modelscope">{t('providerModelScope')}</option>
-                      <option value="antigravity">{t('providerAntigravity')}</option>
-                      <option value="comfyui">{t('providerComfyUI')}</option>
-                    </select>
-                  </label>
-                  {channel.provider === 'comfyui' ? (
-                    <>
-                      <label className="dsh-ig-field">
-                        <span className="dsh-ig-label">{t('endpoint')}</span>
-                        <div className="dsh-ig-input-group">
-                          <input className="dsh-ig-input" type="url" value={channel.baseURL} onChange={event => { updateChannel(channel.id, { baseURL: event.target.value }) }} required />
-                          <button type="button" className="dsh-ig-btn-reset" title={t('resetTitle')} onClick={() => { updateChannel(channel.id, { baseURL: DEFAULT_COMFYUI_BASE_URL }) }}>{t('reset')}</button>
-                        </div>
-                        <span className="dsh-ig-hint">{t('endpointHintComfyUI')}</span>
-                      </label>
-                      <div className="dsh-ig-field">
-                        <span className="dsh-ig-label">{t('workflow')}</span>
-                        <div className="dsh-ig-file-row">
-                          <label className="dsh-ig-file-button">
-                            <input className="dsh-ig-file-input" type="file" accept=".json,application/json" onChange={event => { void importWorkflow(event) }} />
-                            {t('workflowImport')}
-                          </label>
-                          {workflows.length === 0 ? <span className="dsh-ig-file-name">{t('workflowMissing')}</span> : null}
-                        </div>
-                        {workflows.length > 0 ? (
-                          <ul className="dsh-ig-workflow-list">
-                            {workflows.map((entry, index) => (
-                              <li className="dsh-ig-workflow-row" key={String(index)}>
-                                <div className="dsh-ig-workflow-main">
-                                  <label className="dsh-ig-workflow-active" title={t('workflowActiveTitle')}>
-                                    <input
-                                      type="radio"
-                                      name="dsh-ig-active-workflow"
-                                      aria-label={t('workflowActiveTitle')}
-                                      checked={entry.name === activeWorkflow}
-                                      onChange={() => { setActiveWorkflow(entry.name) }}
-                                    />
-                                  </label>
-                                  <input
-                                    className="dsh-ig-input dsh-ig-workflow-name"
-                                    value={entry.name}
-                                    title={entry.name}
-                                    onChange={event => { renameWorkflow(index, event.target.value) }}
-                                  />
-                                  <button type="button" className="dsh-ig-btn-reset" onClick={() => { removeWorkflow(index) }}>{t('workflowRemove')}</button>
-                                </div>
-                                <input
-                                  className="dsh-ig-input dsh-ig-workflow-preset"
-                                  value={entry.presetPrompt ?? ''}
-                                  placeholder={t('workflowPresetPlaceholder')}
-                                  title={t('workflowPresetTitle')}
-                                  onChange={event => { setWorkflowPreset(index, event.target.value) }}
-                                />
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        <span className="dsh-ig-hint">{t('workflowHint')}</span>
-                      </div>
-                      <label className="dsh-ig-field">
-                        <span className="dsh-ig-label">{t('timeout')}</span>
-                        <input className="dsh-ig-input" type="number" min="1" max="3600" step="1" value={timeoutSeconds} onChange={event => { setTimeoutSeconds(Number(event.target.value)) }} required />
-                        <span className="dsh-ig-hint">{t('timeoutHint')}</span>
-                      </label>
-                    </>
-                  ) : (
-                    <>
-                      <label className="dsh-ig-field">
-                        <span className="dsh-ig-label">{t('apiKeyLabel', { provider: providerLabels[channel.provider] })}</span>
-                        <input className="dsh-ig-input" type="password" autoComplete="off" value={channel.keyInput} onChange={event => { updateChannel(channel.id, { keyInput: event.target.value }) }} placeholder={t('apiKeyPlaceholder')} />
-                        <span className="dsh-ig-hint">{t('apiKeyHint', { key: channel.apiKeyEnv.trim() !== '' ? channel.apiKeyEnv : KEY_REF[channel.provider] ?? '' })}</span>
-                      </label>
-                      <label className="dsh-ig-field">
-                        <span className="dsh-ig-label">{t('endpoint')}</span>
-                        <div className="dsh-ig-input-group">
-                          <input className="dsh-ig-input" type="url" value={channel.baseURL} onChange={event => { updateChannel(channel.id, { baseURL: event.target.value }) }} required />
-                          <button type="button" className="dsh-ig-btn-reset" title={t('resetTitle')} onClick={() => { updateChannel(channel.id, { baseURL: DEFAULT_BASE_URLS[channel.provider] }) }}>{t('reset')}</button>
-                        </div>
-                      </label>
-                      <div className="dsh-ig-field">
-                        <span className="dsh-ig-label">{t('modelsList')}</span>
-                        <div className="dsh-ig-input-group">
-                          <button type="button" className="dsh-ig-file-button" onClick={() => { void openPicker(channel) }}>{t('modelsFetch')}</button>
-                          <input className="dsh-ig-input" value={customByChannel[channel.id] ?? ''} placeholder={t('modelsCustomPlaceholder')} onChange={event => { setCustomByChannel(current => ({ ...current, [channel.id]: event.target.value })) }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addCustomModel(channel.id) } }} />
-                          <button type="button" className="dsh-ig-btn-reset" onClick={() => { addCustomModel(channel.id) }}>{t('modelsAdd')}</button>
-                        </div>
-                        {channel.models.length === 0 ? <span className="dsh-ig-hint">{t('modelsListEmpty')}</span> : (
-                          <ul className="dsh-ig-workflow-list">
-                            {channel.models.map(id => (
-                              <li className="dsh-ig-workflow-row" key={id}>
-                                <label className="dsh-ig-workflow-main">
-                                  <input
-                                    type="radio"
-                                    name="dsh-ig-default-model"
-                                    title={t('modelsDefaultTitle')}
-                                    checked={defaultChannelId === channel.id && defaultModel === id}
-                                    onChange={() => { setDefaultChannelId(channel.id); setDefaultModel(id) }}
-                                  />
-                                  <span className="dsh-ig-file-name" title={id}>{id}</span>
-                                </label>
-                                <button type="button" className="dsh-ig-btn-reset" onClick={() => { updateChannel(channel.id, { models: channel.models.filter(entry => entry !== id) }) }}>{t('workflowRemove')}</button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                        <span className="dsh-ig-hint">{t('modelsListHint', { provider: providerLabels[channel.provider] })}</span>
-                      </div>
-                    </>
-                  )}
-                  <button type="button" className="dsh-ig-btn-reset" onClick={() => { removeChannel(channel.id) }}>{t('channelDelete')}</button>
-                </div>
-              ) : null}
-            </div>
-          ))}
-          <button type="button" className="dsh-ig-file-button" onClick={addChannel}>{t('addChannel')}</button>
-        </form>
-      {picker !== null ? (
-        <div className="dsh-ig-regenerate-backdrop" onClick={() => { setPicker(null) }}>
-          <div className="dsh-ig-regenerate-dialog dsh-ig-picker" onClick={event => { event.stopPropagation() }}>
-            <h3>{t('modelsPickerTitle')}</h3>
-            {picker.loading ? <p>{t('modelsFetching')}</p> : picker.error !== '' ? <p className="dsh-ig-regenerate-error">{picker.error}</p> : (
-              <>
-                <p>{t('modelsPickerHint')}</p>
-                <ul className="dsh-ig-picker-list">
-                  {picker.models.map(entry => (
-                    <li key={entry.id}>
-                      <label title={entry.image ? undefined : t('modelsNotLikelyImage')}>
-                        <input type="checkbox" checked={picker.checked.includes(entry.id)} onChange={() => { pickerToggle(entry.id) }} />
-                        <span>{entry.id}</span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            <div className="dsh-ig-regenerate-actions">
-              <button type="button" className="dsh-ig-regenerate-cancel" onClick={() => { setPicker(null) }}>{t('cancel')}</button>
-              <button type="button" className="dsh-ig-regenerate-confirm" disabled={picker.loading} onClick={pickerConfirm}>{t('confirm')}</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </>
-  )
-  return <div className="dsh-ig-page">{content}</div>
 }
 
 /** Keep the legacy Tool row for old DSH and hand modern results to the independent Chat node. */
@@ -1556,150 +1255,6 @@ function imageResultFromBlock(block: ToolCallBlock): ImageResultPresentation | u
 }
 
 /** One channel card as drafted in the settings form. */
-interface ChannelDraft {
-  id: string
-  provider: Provider
-  baseURL: string
-  apiKeyEnv: string
-  models: string[]
-  /** Key typed but not yet stored; travels through credentials/set on save. */
-  keyInput: string
-  open: boolean
-}
-
-/** The fetch-and-confirm modal state. */
-interface ModelPickerState {
-  channelId: string
-  provider: Provider
-  baseURL: string
-  apiKey: string
-  loading: boolean
-  error: string
-  models: Array<{ id: string; image: boolean }>
-  checked: string[]
-}
-
-/**
- * The conversation-header image-model picker (Plan B): a pure client shortcut
- * that rewrites the global default channel + model through the settings scope.
- * Session-scoped rendering means one picker per open conversation, but the
- * selection itself is global — no session id, no host round-trip.
- */
-function ImageModelPicker(props: { scope: SettingsScope<ImageSettings>; locale?: LocaleService | undefined }) {
-  const [snapshot, setSnapshot] = useState(() => props.scope.getSnapshot())
-  const [open, setOpen] = useState(false)
-  const lang = usePluginLanguage(props.locale)
-  useEffect(() => props.scope.subscribe(() => { setSnapshot(props.scope.getSnapshot()) }), [props.scope])
-
-  const dict = lang === 'en' ? DICT.en : DICT.zh
-  const labels: Record<Provider, string> = {
-    google: dict.providerGoogle,
-    openai: dict.providerOpenAI,
-    seedream: dict.providerSeedream,
-    dashscope: dict.providerDashScope,
-    gitee: dict.providerGitee,
-    modelscope: dict.providerModelScope,
-    antigravity: dict.providerAntigravity,
-    comfyui: dict.providerComfyUI,
-  }
-  const drafts = channelsFromSettings(snapshot.value).filter(channel => channel.models.length > 0)
-  if (drafts.length === 0) return null
-
-  const recordedChannel = snapshot.value?.defaultChannelId ?? ''
-  const recordedModel = snapshot.value?.defaultModel ?? ''
-  const activeChannel = drafts.find(channel => channel.id === recordedChannel) ?? drafts[0]!
-  const activeModel = activeChannel.models.includes(recordedModel) ? recordedModel : activeChannel.models[0]!
-
-  return (
-    <div className="dsh-ig-hmodel">
-      <button type="button" className="dsh-ig-hmodel-trigger" title={dict.hmodelTitle} onClick={() => { setOpen(value => !value) }}>
-        <span className="dsh-ig-hmodel-triggerLabel">{dict.hmodelLabel}: {activeModel}</span>
-        <svg className={`dsh-ig-hmodel-chevron${open ? ' dsh-ig-hmodel-chevronOpen' : ''}`} width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4"/></svg>
-      </button>
-      {open ? (
-        <>
-          <div className="dsh-ig-hmodel-backdrop" onClick={() => { setOpen(false) }} />
-          <div className="dsh-ig-hmodel-menu">
-            <div className="dsh-ig-hmodel-groups">
-              {drafts.map(channel => (
-                <div className="dsh-ig-hmodel-group" key={channel.id}>
-                  <div className="dsh-ig-hmodel-groupTitle">{labels[channel.provider]}</div>
-                  {channel.models.map(model => {
-                    const active = channel.id === activeChannel.id && model === activeModel
-                    return (
-                      <button type="button" key={model} className={`dsh-ig-hmodel-option${active ? ' dsh-ig-hmodel-option-active' : ''}`} onClick={() => {
-                        void props.scope.set('defaultChannelId', channel.id)
-                        void props.scope.set('defaultModel', model)
-                        setOpen(false)
-                      }}>
-                        <span className="dsh-ig-hmodel-optionCopy"><span className="dsh-ig-hmodel-modelName">{model}</span></span>
-                        <span className="dsh-ig-hmodel-check">{active ? '✓' : ''}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              ))}
-            </div>
-          </div>
-        </>
-      ) : null}
-    </div>
-  )
-}
-
-/** Draft channels from settings: declared instances, else one synthesized draft from the legacy per-provider fields. */
-function channelsFromSettings(value: ImageSettings | undefined): ChannelDraft[] {
-  const declared = Array.isArray(value?.channels) ? value.channels : []
-  const drafts: ChannelDraft[] = []
-  for (const channel of declared) {
-    if (channel === null || typeof channel !== 'object') continue
-    if (typeof channel.id !== 'string' || channel.id.trim() === '') continue
-    if (typeof channel.provider !== 'string' || !(IMAGE_PROVIDERS as readonly string[]).includes(channel.provider)) continue
-    drafts.push({
-      id: channel.id.trim(),
-      provider: channel.provider as Provider,
-      baseURL: typeof channel.baseURL === 'string' ? channel.baseURL : '',
-      apiKeyEnv: typeof channel.apiKeyEnv === 'string' ? channel.apiKeyEnv : '',
-      models: Array.isArray(channel.models) ? channel.models.filter((id): id is string => typeof id === 'string') : [],
-      keyInput: '',
-      open: false,
-    })
-  }
-  if (drafts.length > 0) return drafts
-  // ComfyUI counts as "added" once workflows exist for it; a fresh deployment
-  // shows no ComfyUI card at all.
-  const comfyWorkflows = resolveComfyUIWorkflows(value ?? {})
-  if (comfyWorkflows.length > 0 || value?.provider === 'comfyui') {
-    drafts.push({ id: 'comfyui', provider: 'comfyui', baseURL: value?.comfyuiBaseURL ?? DEFAULT_COMFYUI_BASE_URL, apiKeyEnv: '', models: comfyWorkflows.map(entry => entry.name), keyInput: '', open: false })
-  }
-  if (drafts.length > 0) return drafts
-  // Legacy single-provider config: surface it as one visible draft so the
-  // migration to channel cards is a review, not a rebuild.
-  const provider = (value?.provider ?? 'google') as Provider
-  if (provider === 'comfyui') return []
-  return [{ id: provider, provider, baseURL: baseURLOf(provider, value), apiKeyEnv: '', models: modelsListOf(provider, value), keyInput: '', open: false }]
-}
-
-/** The settings key holding the agent-selectable model list for one provider. */
-function modelsKeyOf(provider: Provider): 'googleModels' | 'openaiModels' | 'seedreamModels' | 'dashscopeModels' | 'giteeModels' | 'modelscopeModels' | 'antigravityModels' {
-  switch (provider) {
-    case 'google': return 'googleModels'
-    case 'openai': return 'openaiModels'
-    case 'seedream': return 'seedreamModels'
-    case 'gitee': return 'giteeModels'
-    case 'modelscope': return 'modelscopeModels'
-    case 'antigravity': return 'antigravityModels'
-    default: return 'dashscopeModels'
-  }
-}
-
-/** The saved agent-selectable model list for one provider. */
-function modelsListOf(provider: Provider, value: ImageSettings | undefined): string[] {
-  const stored = value === undefined ? undefined : value[modelsKeyOf(provider)]
-  return Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : []
-}
-
-function baseURLOf(provider: Provider, value: ImageSettings | undefined): string {
-  const stored = provider === 'google' ? value?.googleEndpoint : provider === 'openai' ? value?.openaiBaseURL : provider === 'seedream' ? value?.seedreamBaseURL : provider === 'dashscope' ? value?.dashscopeEndpoint : provider === 'gitee' ? value?.giteeBaseURL : provider === 'modelscope' ? value?.modelscopeBaseURL : provider === 'antigravity' ? value?.antigravityBaseURL : value?.comfyuiBaseURL
-  return typeof stored === 'string' && stored.length > 0 ? stored : DEFAULT_BASE_URLS[provider]
-}
+// ChannelDraft, ModelPickerState, channelsFromSettings, modelsKeyOf,
+// modelsListOf, baseURLOf all moved to `./settings-card.tsx` (now exported
+// from there). The picker UI itself (`ImageModelPicker`) also lives there.
