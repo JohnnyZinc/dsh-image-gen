@@ -12,6 +12,8 @@ export interface GalleryItem {
   prompt: string
   provider: ImageProvider
   model: string
+  /** Channel instance that produced the image; absent on records written before channelization. */
+  channelId?: string | undefined
   createdAt: number
   aspectRatio?: string | undefined
   imageSize?: string | undefined

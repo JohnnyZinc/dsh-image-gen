@@ -341,7 +341,7 @@ pnpm run build
 pnpm run pack:check
 ```
 
-欢迎通过 [Issues](https://github.com/shanliuling/dsh-image-gen/issues) 反馈问题，或阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 后提交 Pull Request。
+欢迎通过 [Issues](https://github.com/shanliuling/dsh-image-gen/issues) 反馈问题，或阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 后提交 Pull Request。已知问题清单见 [KNOWN-ISSUES.md](KNOWN-ISSUES.md)。
 
 ## License
 

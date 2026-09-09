@@ -1,19 +1,17 @@
-/** Provider-aware orchestration for the browser image workbench. */
+/** Channel-aware orchestration for the browser image workbench. */
 import type { ImageAttachmentRef, ImageMediaType, StoredImageAttachment } from '@deepseek-ai/dsh-attachment'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { Context } from '@deepseek-ai/cordis'
 import {
-  ASPECT_RATIOS,
   ANTIGRAVITY_API_KEY_ENV,
   DASHSCOPE_API_KEY_ENV,
   GITEE_API_KEY_ENV,
   GOOGLE_API_KEY_ENV,
-  IMAGE_SIZES,
   MODELSCOPE_API_KEY_ENV,
   OPENAI_API_KEY_ENV,
   SEEDREAM_API_KEY_ENV,
+  channelProfile,
   resolveProvider,
-  withProviderModel,
   type AspectRatio,
   type Config,
   type ImageSize,
@@ -24,15 +22,13 @@ import { generateModelScopeImage } from './modelscope.js'
 import { editGoogleImage, generateGoogleImage } from './google.js'
 import { editOpenAICompatibleImage, generateOpenAICompatibleImage } from './openai-compatible.js'
 import { editSeedreamImage } from './seedream.js'
+import { resolveActiveChannelId, resolveStudioChannel, studioChannels, studioProfileFromChannel } from './studio-profile.js'
 import {
-  CLOUD_IMAGE_PROVIDERS,
-  PROVIDER_LABELS,
   type CloudImageProvider,
   type StudioConfigResponse,
   type StudioGenerateRequest,
   type StudioGenerateResponse,
   type StudioGeneratedItem,
-  type StudioOption,
   type StudioProviderProfile,
   type StudioReference,
 } from './shared.js'
@@ -48,30 +44,18 @@ const CREDENTIALS: Record<CloudImageProvider, string> = {
   antigravity: ANTIGRAVITY_API_KEY_ENV,
 }
 
-const RATIO_LABELS: Record<string, string> = {
-  auto: '自动',
-  '1:1': '1:1 方形',
-  '3:2': '3:2 横向',
-  '2:3': '2:3 肖像',
-  '4:3': '4:3 横向',
-  '3:4': '3:4 竖向',
-  '16:9': '16:9 宽屏',
-  '9:16': '9:16 竖屏',
-}
-
-/** Return only browser-safe capability data. */
+/** Return only browser-safe capability data, keyed by channel instance. */
 export async function describeStudio(ctx: Context, config: Config): Promise<StudioConfigResponse> {
-  const configuredEntries = await Promise.all(CLOUD_IMAGE_PROVIDERS.map(async provider => {
-    const credential = await ctx.credentials.resolve(credentialRef(CREDENTIALS[provider]))
-    return [provider, credential !== undefined && credential.value.trim().length > 0] as const
+  const profiles = await Promise.all(studioChannels(config).map(async channel => {
+    const credentialEnv = channel.apiKeyEnv !== undefined && channel.apiKeyEnv.trim() !== ''
+      ? channel.apiKeyEnv.trim()
+      : CREDENTIALS[channel.provider]
+    const credential = await ctx.credentials.resolve(credentialRef(credentialEnv))
+    const hasModels = (channel.models ?? []).some(model => typeof model === 'string' && model.trim() !== '')
+    const configured = hasModels && credential !== undefined && credential.value.trim().length > 0
+    return studioProfileFromChannel(config, channel, configured)
   }))
-  const configured = Object.fromEntries(configuredEntries) as Record<CloudImageProvider, boolean>
-  const profiles = CLOUD_IMAGE_PROVIDERS.map(provider => studioProfile(config, provider, configured[provider]))
-  const preferred = config.provider
-  const activeProvider = preferred !== undefined && cloudProvider(preferred)
-    ? preferred
-    : profiles.find(profile => profile.configured)?.provider ?? 'google'
-  return { providers: profiles, activeProvider }
+  return { providers: profiles, activeChannelId: resolveActiveChannelId(config, profiles) }
 }
 
 /** Execute one validated browser workbench request using the existing provider adapters. */
@@ -82,13 +66,18 @@ export async function generateFromStudio(
   signal: AbortSignal,
   fallbackWorkspaceRoot?: string | undefined,
 ): Promise<StudioGenerateResponse> {
-  const profile = studioProfile(config, input.provider, true)
+  const channel = resolveStudioChannel(config, input.channelId)
+  const profile = studioProfileFromChannel(config, channel, true)
   assertAllowed(profile, input)
-  const active = resolveProvider(withProviderModel(config, input.provider, input.model))
-  if (active.provider !== input.provider) throw new Error('Invalid cloud provider profile')
-  const credential = await ctx.credentials.resolve(credentialRef(active.apiKeyEnv))
+  const active = resolveProvider(channelProfile(config, channel, input.model))
+  // The string comparison covers malformed cast inputs; the typed check lets TS narrow.
+  if (active.provider === 'comfyui' || (active.provider as string) !== (channel.provider as string)) throw new Error('Invalid cloud channel profile')
+  const credentialEnv = channel.apiKeyEnv !== undefined && channel.apiKeyEnv.trim() !== ''
+    ? channel.apiKeyEnv.trim()
+    : active.apiKeyEnv
+  const credential = await ctx.credentials.resolve(credentialRef(credentialEnv))
   if (credential === undefined || credential.value.trim().length === 0) {
-    throw new Error(`${PROVIDER_LABELS[input.provider]} 尚未配置 API Key，请先到设置中配置`)
+    throw new Error(`${channel.label} 尚未配置 API Key，请先到设置中配置`)
   }
 
   const rawRefs = input.references ?? (input.reference ? [input.reference] : [])
@@ -175,7 +164,8 @@ export async function generateFromStudio(
     return {
       attachment: single.attachment,
       output: single.output,
-      provider: input.provider,
+      channelId: channel.id,
+      provider: channel.provider as CloudImageProvider,
       model: input.model,
       prompt: input.prompt,
       createdAt: Date.now(),
@@ -213,7 +203,8 @@ export async function generateFromStudio(
   return {
     attachment: first.attachment,
     output: first.output,
-    provider: input.provider,
+    channelId: channel.id,
+    provider: channel.provider as CloudImageProvider,
     model: input.model,
     prompt: input.prompt,
     createdAt: Date.now(),
@@ -254,63 +245,12 @@ export async function runPool<T>(
   return results
 }
 
-export function studioProfile(config: Config, provider: CloudImageProvider, configured: boolean): StudioProviderProfile {
-  const active = resolveProvider(withProviderModel(config, provider))
-  // The string comparison covers malformed cast inputs; the typed check lets TS narrow.
-  if (active.provider === 'comfyui' || (active.provider as string) !== (provider as string)) throw new Error('Invalid cloud provider profile')
-  const model = active.model
-  if (provider === 'google') {
-    return profile(provider, model, configured, ASPECT_RATIOS.map(option), IMAGE_SIZES.map(value => ({ value, label: value })), '1:1', '1K')
-  }
-  if (provider === 'openai') {
-    return profile(provider, model, configured, ['1:1', '3:2', '2:3'].map(option), [{ value: 'standard', label: '标准（推荐）' }], '1:1', 'standard')
-  }
-  if (provider === 'gitee') {
-    return profile(provider, model, configured, ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'].map(option), ['1K', '2K', '4K'].map(value => ({ value, label: value })), '1:1', '1K')
-  }
-  if (provider === 'modelscope') {
-    return profile(provider, model, configured, ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'].map(option), ['1K', '2K', '4K'].map(value => ({ value, label: value })), '1:1', '1K')
-  }
-  if (provider === 'antigravity') {
-    return profile(provider, model, configured, ['1:1', '4:3', '3:4', '16:9', '9:16'].map(option), [{ value: 'standard', label: '标准（1K）' }, { value: 'medium', label: '中（2K）' }, { value: 'hd', label: '高（4K）' }], '1:1', 'standard')
-  }
-  if (provider === 'seedream') {
-    return profile(provider, model, configured, [{ value: 'auto', label: '模型自动' }], ['1K', '2K', '4K'].map(value => ({ value, label: value })), 'auto', '2K')
-  }
-  return profile(provider, model, configured, ['1:1', '3:2', '2:3', '16:9', '9:16'].map(option), [{ value: 'standard', label: '标准（推荐）' }], '1:1', 'standard')
-}
-
-function profile(
-  provider: CloudImageProvider,
-  model: string,
-  configured: boolean,
-  ratioOptions: StudioOption[],
-  qualityOptions: StudioOption[],
-  defaultRatio: string,
-  defaultQuality: string,
-): StudioProviderProfile {
-  return {
-    provider,
-    label: PROVIDER_LABELS[provider],
-    model,
-    configured,
-    supportsEditing: true,
-    ratioOptions,
-    qualityOptions,
-    defaultRatio,
-    defaultQuality,
-  }
-}
-
-function option(value: string): StudioOption {
-  return { value, label: RATIO_LABELS[value] ?? value }
-}
-
 function assertAllowed(profile: StudioProviderProfile, input: StudioGenerateRequest): void {
-  if (input.model !== profile.model) throw new Error('模型配置已变化，请刷新工作台后重试')
-  if (!profile.ratioOptions.some(option => option.value === input.ratio)) throw new Error('该 Provider 不支持所选比例')
-  if (!profile.qualityOptions.some(option => option.value === input.quality)) throw new Error('该 Provider 不支持所选清晰度')
-  if (input.mode === 'edit' && !profile.supportsEditing) throw new Error('该 Provider 暂不支持图生图')
+  if (profile.models.length === 0) throw new Error('该渠道尚未配置模型，请到设置中添加后再试')
+  if (!profile.models.includes(input.model)) throw new Error('模型配置已变化，请刷新工作台后重试')
+  if (!profile.ratioOptions.some(option => option.value === input.ratio)) throw new Error('该渠道不支持所选比例')
+  if (!profile.qualityOptions.some(option => option.value === input.quality)) throw new Error('该渠道不支持所选清晰度')
+  if (input.mode === 'edit' && !profile.supportsEditing) throw new Error('该渠道暂不支持图生图')
 }
 
 async function readStudioReference(
@@ -351,8 +291,4 @@ function dashScopeSize(ratio: string): string {
     '9:16': '928*1664',
   }
   return sizes[ratio] ?? '1024*1024'
-}
-
-function cloudProvider(value: string): value is CloudImageProvider {
-  return (CLOUD_IMAGE_PROVIDERS as readonly string[]).includes(value)
 }

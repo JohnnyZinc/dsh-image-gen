@@ -3,8 +3,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import { parseImageAttachmentRef } from './reference-image.js'
 import {
-  CLOUD_IMAGE_PROVIDERS,
-  type CloudImageProvider,
   type StudioConfigResponse,
   type StudioGenerateRequest,
   type StudioGenerateResponse,
@@ -73,7 +71,7 @@ export function parseStudioGenerateRequest(value: unknown): StudioGenerateReques
   const input = record(value)
   if (input === undefined) throw new Error('请求格式无效')
   if (input.mode !== 'generate' && input.mode !== 'edit') throw new Error('请选择生成类型')
-  if (!cloudProvider(input.provider)) throw new Error('不支持该图像 Provider')
+  const channelId = requiredText(input.channelId, '请选择渠道', 64)
   const prompt = requiredText(input.prompt, '请输入提示词', 2_000)
   const model = requiredText(input.model, '请选择模型', 200)
   const ratio = requiredText(input.ratio, '请选择比例', 32)
@@ -98,7 +96,7 @@ export function parseStudioGenerateRequest(value: unknown): StudioGenerateReques
   }
   return {
     mode: input.mode,
-    provider: input.provider,
+    channelId,
     model,
     prompt,
     ratio,
@@ -134,10 +132,6 @@ function requiredText(value: unknown, message: string, maxLength: number): strin
   const text = value.trim()
   if (text.length > maxLength) throw new Error(`${message}（最多 ${String(maxLength)} 个字符）`)
   return text
-}
-
-function cloudProvider(value: unknown): value is CloudImageProvider {
-  return typeof value === 'string' && (CLOUD_IMAGE_PROVIDERS as readonly string[]).includes(value)
 }
 
 function imageMediaType(value: unknown): value is ImageMediaType {

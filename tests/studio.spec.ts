@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { DEFAULT_GOOGLE_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_SEEDREAM_MODEL, DEFAULT_DASHSCOPE_MODEL } from '../src/config.js'
-import { generateFromStudio, runPool, studioProfile } from '../src/studio.js'
+import { DEFAULT_GOOGLE_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_SEEDREAM_MODEL, DEFAULT_DASHSCOPE_MODEL, type Config } from '../src/config.js'
+import { generateFromStudio, runPool } from '../src/studio.js'
+import { studioChannels, studioProfileFromChannel } from '../src/studio-profile.js'
 import { parseStudioGenerateRequest, serveStudio } from '../src/studio-route.js'
 import {
   fetchAttachmentBlob,
@@ -20,19 +21,26 @@ import {
 } from '../src/client/conversation-image-revisions.js'
 import { buildComparisonTargets, initialComparisonProviders } from '../src/client/multi-model-compare.js'
 
-describe('multi-model comparison planning', () => {
-  const profiles = [
-    studioProfile({}, 'google', true),
-    studioProfile({}, 'openai', true),
-    studioProfile({}, 'seedream', true),
-    studioProfile({}, 'dashscope', false),
-  ]
+/** Legacy single-provider config with every cloud channel explicitly configured, in provider order. */
+const comparisonConfig: Config = {
+  googleModels: [DEFAULT_GOOGLE_MODEL],
+  openaiModels: [DEFAULT_OPENAI_MODEL],
+  seedreamModels: [DEFAULT_SEEDREAM_MODEL],
+  dashscopeModels: [DEFAULT_DASHSCOPE_MODEL],
+}
 
-  it('starts with the active provider and one additional configured model', () => {
+function channelProfiles(configured: (provider: string) => boolean) {
+  return studioChannels(comparisonConfig).map(channel => studioProfileFromChannel(comparisonConfig, channel, configured(channel.provider)))
+}
+
+describe('multi-model comparison planning', () => {
+  const profiles = channelProfiles(provider => provider !== 'dashscope')
+
+  it('starts with the active channel and one additional configured channel', () => {
     expect(initialComparisonProviders(profiles, 'openai')).toEqual(['openai', 'google'])
   })
 
-  it('maps unsupported shared settings to each provider default', () => {
+  it('maps unsupported shared settings to each channel default', () => {
     const targets = buildComparisonTargets(profiles, ['google', 'openai', 'seedream', 'dashscope'], '16:9', '4K')
     expect(targets.map(target => ({
       provider: target.profile.provider,
@@ -47,36 +55,42 @@ describe('multi-model comparison planning', () => {
   })
 })
 
-describe('image workbench provider capabilities', () => {
+describe('image workbench channel capabilities', () => {
   it('exposes only parameters implemented by each cloud adapter', () => {
-    const google = studioProfile({}, 'google', true)
-    expect(google).toMatchObject({ model: DEFAULT_GOOGLE_MODEL, defaultRatio: '1:1', defaultQuality: '1K', configured: true })
+    const byProvider = (provider: string, configured: boolean) => {
+      const channel = studioChannels(comparisonConfig).find(candidate => candidate.provider === provider)!
+      return studioProfileFromChannel(comparisonConfig, channel, configured)
+    }
+
+    const google = byProvider('google', true)
+    expect(google).toMatchObject({ channelId: 'google', provider: 'google', model: DEFAULT_GOOGLE_MODEL, defaultRatio: '1:1', defaultQuality: '1K', configured: true })
     expect(google.ratioOptions.map(option => option.value)).toContain('16:9')
     expect(google.qualityOptions.map(option => option.value)).toEqual(['1K', '2K', '4K'])
 
-    const openai = studioProfile({}, 'openai', false)
+    const openai = byProvider('openai', false)
     expect(openai).toMatchObject({ model: DEFAULT_OPENAI_MODEL, configured: false })
     expect(openai.ratioOptions.map(option => option.value)).toEqual(['1:1', '3:2', '2:3'])
     expect(openai.qualityOptions).toEqual([{ value: 'standard', label: '标准（推荐）' }])
 
-    const seedream = studioProfile({}, 'seedream', true)
+    const seedream = byProvider('seedream', true)
     expect(seedream).toMatchObject({ model: DEFAULT_SEEDREAM_MODEL, defaultRatio: 'auto', defaultQuality: '2K', configured: true })
     expect(seedream.qualityOptions.map(o => o.value)).toEqual(['1K', '2K', '4K'])
 
-    const dashscope = studioProfile({}, 'dashscope', true)
+    const dashscope = byProvider('dashscope', true)
     expect(dashscope).toMatchObject({ model: DEFAULT_DASHSCOPE_MODEL, defaultRatio: '1:1', defaultQuality: 'standard', configured: true })
     expect(dashscope.ratioOptions.map(o => o.value)).toEqual(['1:1', '3:2', '2:3', '16:9', '9:16'])
   })
 
-  it('does not expose ComfyUI through the first workbench release', () => {
-    expect(() => studioProfile({}, 'comfyui' as never, true)).toThrow()
+  it('does not expose ComfyUI through the workbench', () => {
+    const channels = studioChannels({ provider: 'comfyui', comfyuiBaseURL: 'http://127.0.0.1:8188' })
+    expect(channels.some(channel => channel.provider === 'comfyui')).toBe(false)
   })
 })
 
 describe('image workbench request validation', () => {
   const base = {
     mode: 'generate' as const,
-    provider: 'google' as const,
+    channelId: 'google' as const,
     model: DEFAULT_GOOGLE_MODEL,
     prompt: '  a warm editorial portrait  ',
     ratio: '2:3',
@@ -119,8 +133,8 @@ describe('image workbench request validation', () => {
     })).toThrow('5')
   })
 
-  it('rejects ComfyUI and oversized prompts at the browser boundary', () => {
-    expect(() => parseStudioGenerateRequest({ ...base, provider: 'comfyui' as never })).toThrow('Provider')
+  it('rejects requests without a channel and oversized prompts at the browser boundary', () => {
+    expect(() => parseStudioGenerateRequest({ ...base, channelId: undefined as never })).toThrow('请选择渠道')
     expect(() => parseStudioGenerateRequest({ ...base, prompt: 'x'.repeat(2_001) })).toThrow('2000')
   })
 
@@ -206,30 +220,36 @@ describe('multi-image worker pool', () => {
 })
 
 describe('conversation and gallery image regeneration', () => {
-  it('reuses provider output settings while allowing the prompt to change', () => {
+  const regenChannels = studioChannels({
+    googleModels: [DEFAULT_GOOGLE_MODEL],
+    openaiModels: [DEFAULT_OPENAI_MODEL],
+    dashscopeModels: [DEFAULT_DASHSCOPE_MODEL],
+  }).map(channel => studioProfileFromChannel(comparisonConfig, channel, true))
+
+  it('reuses channel output settings while allowing the prompt to change', () => {
     expect(conversationRegenerateRequest({
       provider: 'google', model: DEFAULT_GOOGLE_MODEL, output: '2:3, 2K',
-    }, '  softer evening light  ')).toEqual({
-      mode: 'generate', provider: 'google', model: DEFAULT_GOOGLE_MODEL,
+    }, '  softer evening light  ', { channels: regenChannels })).toEqual({
+      mode: 'generate', channelId: 'google', model: DEFAULT_GOOGLE_MODEL,
       prompt: 'softer evening light', ratio: '2:3', quality: '2K',
     })
     expect(conversationRegenerateRequest({
       provider: 'openai', model: DEFAULT_OPENAI_MODEL, output: '1536x1024',
-    }, 'another version')).toMatchObject({ ratio: '3:2', quality: 'standard' })
+    }, 'another version', { channels: regenChannels })).toMatchObject({ channelId: 'openai', ratio: '3:2', quality: 'standard' })
     expect(conversationRegenerateRequest({
       provider: 'dashscope', model: DEFAULT_DASHSCOPE_MODEL, output: '928*1664',
-    }, 'another version')).toMatchObject({ ratio: '9:16', quality: 'standard' })
+    }, 'another version', { channels: regenChannels })).toMatchObject({ channelId: 'dashscope', ratio: '9:16', quality: 'standard' })
   })
 
   it('supports gallery items with undefined output and explicit ratio/quality', () => {
     const request = conversationRegenerateRequest(
       { provider: 'google', model: DEFAULT_GOOGLE_MODEL },
       'new prompt',
-      { ratio: '16:9', quality: '4K' },
+      { channels: regenChannels, remembered: { ratio: '16:9', quality: '4K' } },
     )
     expect(request).toEqual({
       mode: 'generate',
-      provider: 'google',
+      channelId: 'google',
       model: DEFAULT_GOOGLE_MODEL,
       prompt: 'new prompt',
       ratio: '16:9',
@@ -240,7 +260,7 @@ describe('conversation and gallery image regeneration', () => {
   it('rejects providers not supported by the API workbench', () => {
     expect(() => conversationRegenerateRequest({
       provider: 'comfyui', model: 'workflow', output: 'API workflow',
-    }, 'another version')).toThrow('Provider')
+    }, 'another version', { channels: regenChannels })).toThrow('暂不支持重新生成')
   })
 
   it('persists revisions and the selected in-place version', () => {
@@ -289,7 +309,7 @@ describe('real HTTP server cancellation with Fetch Abort', () => {
 
     server = createServer(async (req, res) => {
       await serveStudio(req, res, {
-        describe: async () => ({ providers: [], activeProvider: 'google' }),
+        describe: async () => ({ providers: [], activeChannelId: '' }),
         generate: async (_input, signal) => {
           signal.addEventListener('abort', () => {
             serverAbortFired = true
@@ -322,7 +342,7 @@ describe('real HTTP server cancellation with Fetch Abort', () => {
     const clientController = new AbortController()
     const payload = JSON.stringify({
       mode: 'generate',
-      provider: 'google',
+      channelId: 'google',
       model: DEFAULT_GOOGLE_MODEL,
       prompt: 'a tranquil lake at dawn',
       ratio: '1:1',
@@ -542,7 +562,7 @@ describe('generateFromStudio multi-image execution', () => {
       {},
       {
         mode: 'generate',
-        provider: 'google',
+        channelId: 'google',
         model: DEFAULT_GOOGLE_MODEL,
         prompt: 'test prompt',
         ratio: '1:1',
@@ -600,7 +620,7 @@ describe('generateFromStudio multi-image execution', () => {
       {},
       {
         mode: 'generate',
-        provider: 'google',
+        channelId: 'google',
         model: DEFAULT_GOOGLE_MODEL,
         prompt: 'test prompt',
         ratio: '1:1',
@@ -641,7 +661,7 @@ describe('generateFromStudio multi-image execution', () => {
       {},
       {
         mode: 'generate',
-        provider: 'google',
+        channelId: 'google',
         model: DEFAULT_GOOGLE_MODEL,
         prompt: 'test prompt',
         ratio: '1:1',

@@ -30,11 +30,16 @@ export interface StudioOption {
   label: string
 }
 
-/** Browser-safe provider description. Credentials and endpoints never cross this boundary. */
+/** Browser-safe channel description. Credentials and endpoints never cross this boundary. */
 export interface StudioProviderProfile {
+  /** Stable channel instance id — what workbench requests reference. */
+  channelId: string
   provider: CloudImageProvider
   label: string
+  /** Default model on this channel (first entry, or the recorded default when it lives here). */
   model: string
+  /** Every selectable model on this channel (the workbench model dropdown source). */
+  models: string[]
   configured: boolean
   supportsEditing: boolean
   ratioOptions: StudioOption[]
@@ -54,7 +59,8 @@ export interface StudioWorkspaceInfo {
 /** Read model and capability state for the workbench without exposing secrets. */
 export interface StudioConfigResponse {
   providers: StudioProviderProfile[]
-  activeProvider: CloudImageProvider
+  /** Channel instance the workbench should open on: the default channel, else the first configured one. */
+  activeChannelId: string
   workspaceRoot?: string | undefined
   workspaces?: StudioWorkspaceInfo[] | undefined
 }
@@ -76,7 +82,8 @@ export type StudioReference = StudioEncodedReference | StudioAttachmentReference
 /** One browser workbench generation or editing request. */
 export interface StudioGenerateRequest {
   mode: 'generate' | 'edit'
-  provider: CloudImageProvider
+  /** Channel instance id; the server resolves its endpoint, credential ref, and model list. */
+  channelId: string
   model: string
   prompt: string
   ratio: string
@@ -96,6 +103,8 @@ export interface StudioGeneratedItem {
 
 /** One completed workbench request. */
 export interface StudioGenerateResponse extends StudioGeneratedItem {
+  /** Channel instance the result was produced on; gallery records keep it for faithful regeneration. */
+  channelId: string
   provider: CloudImageProvider
   model: string
   prompt: string

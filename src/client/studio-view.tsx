@@ -27,7 +27,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { DELETE_ROUTE, SAVE_WORKSPACE_ROUTE, STUDIO_ROUTE, type CloudImageProvider, type StudioConfigResponse, type StudioGenerateResponse, type StudioGeneratedItem, type StudioProviderProfile, type StudioReference } from '../shared.js'
+import { DELETE_ROUTE, SAVE_WORKSPACE_ROUTE, STUDIO_ROUTE, type StudioConfigResponse, type StudioGenerateResponse, type StudioGeneratedItem, type StudioProviderProfile, type StudioReference } from '../shared.js'
 import { deleteGalleryItem, getGalleryItems, saveGalleryItem, subscribeGallery, toggleFavoriteGalleryItem, type GalleryItem } from './gallery-store.js'
 import { evictAttachmentCache, fetchAttachmentBlob } from './image-cache.js'
 import { copyImageBlob, downloadBlobUrl, formatRelativeTime } from './browser-image-utils.js'
@@ -56,7 +56,7 @@ const COPY = {
     title: '云端生图工作台', configured: 'API 已配置', unconfigured: '未配置', recent: '最近生成', empty: '暂无生成历史',
     generate: '文生图', edit: '图生图', details: '图片详情', reference: '参考图', optional: '选填', upload: '点击或拖拽图片到此处',
     uploadHint: '支持 JPG / PNG / WebP / GIF，最大 10MB（最多 5 张）', prompt: '提示词 Prompt', clear: '清空', promptPlaceholder: '描述主体、构图、风格、光线与需要出现的文字…（支持 Ctrl+Enter 快捷生成）',
-    provider: 'Provider', model: 'Model', ratio: '比例', quality: '清晰度', start: '开始生成', generating: '正在生成…', cancelGenerate: '取消生成',
+    provider: 'Provider', model: 'Model', channel: '渠道', ratio: '比例', quality: '清晰度', start: '开始生成', generating: '正在生成…', cancelGenerate: '取消生成',
     count: '生成数量', countUnit: '{n} 张', partialSuccess: '已生成 {success} 张图片，{failed} 张失败', generatingCount: '正在生成（共 {count} 张）…',
     batchResult: '本次生成（共 {count} 张）',
     singleModel: '单模型', compareModels: '多模型对比', compareHint: '相同提示词，同时交给多个模型', compareSelect: '选择模型', compareSelected: '已选 {count} 个模型',
@@ -83,7 +83,7 @@ const COPY = {
     title: 'Cloud Image Studio', configured: 'API configured', unconfigured: 'Not configured', recent: 'Recent generations', empty: 'No generated images yet',
     generate: 'Text to image', edit: 'Image to image', details: 'Image details', reference: 'Reference image', optional: 'optional', upload: 'Click or drop images here',
     uploadHint: 'JPG / PNG / WebP / GIF, up to 10MB (max 5)', prompt: 'Prompt', clear: 'Clear', promptPlaceholder: 'Describe the subject, composition, style, lighting, and exact text… (Ctrl+Enter to generate)',
-    provider: 'Provider', model: 'Model', ratio: 'Aspect ratio', quality: 'Quality', start: 'Generate', generating: 'Generating…', cancelGenerate: 'Cancel',
+    provider: 'Provider', model: 'Model', channel: 'Channel', ratio: 'Aspect ratio', quality: 'Quality', start: 'Generate', generating: 'Generating…', cancelGenerate: 'Cancel',
     count: 'Number of images', countUnit: '{n}', partialSuccess: 'Generated {success} images, {failed} failed', generatingCount: 'Generating ({count} images)…',
     batchResult: 'Generated {count} images',
     singleModel: 'Single model', compareModels: 'Compare models', compareHint: 'Send the same prompt to multiple models', compareSelect: 'Choose models', compareSelected: '{count} models selected',
@@ -134,7 +134,7 @@ export const StudioView: FC<{
   const [selected, setSelected] = useState<GalleryItem | null>(null)
   const [mode, setMode] = useState<Mode>('generate')
   const [panelTab, setPanelTab] = useState<PanelTab>('generate')
-  const [provider, setProvider] = useState('google')
+  const [channelId, setChannelId] = useState('')
   const [model, setModel] = useState('')
   const [ratio, setRatio] = useState('1:1')
   const [quality, setQuality] = useState('1K')
@@ -145,7 +145,7 @@ export const StudioView: FC<{
   const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([])
   const [batchKind, setBatchKind] = useState<BatchKind | null>(null)
   const [comparisonEnabled, setComparisonEnabled] = useState(false)
-  const [comparisonProviders, setComparisonProviders] = useState<CloudImageProvider[]>([])
+  const [comparisonChannels, setComparisonChannels] = useState<string[]>([])
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -175,9 +175,11 @@ export const StudioView: FC<{
     onInitialPromptApplied?.()
   }, [initialPrompt, onInitialPromptApplied])
 
+  // DashScope editing accepts at most 3 reference images; decide from the
+  // provider behind the active / selected channels.
   const maxReferences = comparisonEnabled
-    ? (comparisonProviders.includes('dashscope') ? 3 : 5)
-    : (provider === 'dashscope' ? 3 : 5)
+    ? (config?.providers.some(item => comparisonChannels.includes(item.channelId) && item.provider === 'dashscope') ? 3 : 5)
+    : (config?.providers.find(item => item.channelId === channelId)?.provider === 'dashscope' ? 3 : 5)
   const referencesRef = useRef(references)
   referencesRef.current = references
 
@@ -198,10 +200,10 @@ export const StudioView: FC<{
       const payload = await response.json() as StudioConfigResponse | { error?: string }
       if (!response.ok || !('providers' in payload)) throw new Error('error' in payload && payload.error ? payload.error : 'Studio unavailable')
       setConfig(payload)
-      const initial = payload.providers.find(item => item.provider === payload.activeProvider) ?? payload.providers[0]
+      const initial = payload.providers.find(item => item.channelId === payload.activeChannelId) ?? payload.providers[0]
       if (initial !== undefined) {
-        applyProvider(initial)
-        setComparisonProviders(initialComparisonProviders(payload.providers, initial.provider))
+        applyProfile(initial)
+        setComparisonChannels(initialComparisonProviders(payload.providers, initial.channelId))
       }
     } catch (fetchError) {
       if (!controller.signal.aborted) setConfigError(messageOf(fetchError))
@@ -301,7 +303,7 @@ export const StudioView: FC<{
     }
   }, [])
 
-  const activeProfile = useMemo(() => config?.providers.find(item => item.provider === provider), [config, provider])
+  const activeProfile = useMemo(() => config?.providers.find(item => item.channelId === channelId), [config, channelId])
   const configuredCount = config?.providers.filter(item => item.configured).length ?? 0
   const displayItems = useMemo(() => items.slice(0, visibleLimit), [items, visibleLimit])
   const comparisonProfiles = useMemo(
@@ -309,23 +311,23 @@ export const StudioView: FC<{
     [config, mode],
   )
   const comparisonTargets = useMemo(
-    () => buildComparisonTargets(comparisonProfiles, comparisonProviders, ratio, quality),
-    [comparisonProfiles, comparisonProviders, ratio, quality],
+    () => buildComparisonTargets(comparisonProfiles, comparisonChannels, ratio, quality),
+    [comparisonProfiles, comparisonChannels, ratio, quality],
   )
 
-  const applyProvider = (profile: StudioProviderProfile) => {
-    setProvider(profile.provider)
+  const applyProfile = (profile: StudioProviderProfile) => {
+    setChannelId(profile.channelId)
     setModel(profile.model)
     setRatio(profile.defaultRatio)
     setQuality(profile.defaultQuality)
     setError(null)
   }
 
-  const changeProvider = (value: string) => {
-    const profile = config?.providers.find(item => item.provider === value)
+  const changeChannel = (value: string) => {
+    const profile = config?.providers.find(item => item.channelId === value)
     if (profile !== undefined) {
-      applyProvider(profile)
-      const providerMax = value === 'dashscope' ? 3 : 5
+      applyProfile(profile)
+      const providerMax = profile.provider === 'dashscope' ? 3 : 5
       if (referencesRef.current.length > providerMax) {
         const keep = referencesRef.current.slice(0, providerMax)
         const overflow = referencesRef.current.slice(providerMax)
@@ -432,6 +434,13 @@ export const StudioView: FC<{
     setReferences([])
   }
 
+  // Re-target the generator at the channel that produced a gallery item,
+  // falling back to the first channel of its provider for pre-channelization records.
+  const applyChannelForItem = (item: GalleryItem) => {
+    const profile = config?.providers.find(p => p.channelId === item.channelId) ?? config?.providers.find(p => p.provider === item.provider)
+    if (profile !== undefined) applyProfile(profile)
+  }
+
   const continueEdit = async () => {
     if (selected === null) return
     const targetItem = selected
@@ -441,7 +450,7 @@ export const StudioView: FC<{
     if (referencesRef.current.some(r => r.attachment?.attachmentId === targetAttId)) {
       setMode('edit')
       setPanelTab('generate')
-      changeProvider(targetItem.provider)
+      applyChannelForItem(targetItem)
       return
     }
     if (referencesRef.current.length >= targetMax) {
@@ -454,7 +463,7 @@ export const StudioView: FC<{
       if (referencesRef.current.some(r => r.attachment?.attachmentId === targetAttId)) {
         setMode('edit')
         setPanelTab('generate')
-        changeProvider(targetItem.provider)
+        applyChannelForItem(targetItem)
         return
       }
       if (referencesRef.current.length >= targetMax) {
@@ -474,7 +483,7 @@ export const StudioView: FC<{
       setError(null)
       setMode('edit')
       setPanelTab('generate')
-      changeProvider(targetItem.provider)
+      applyChannelForItem(targetItem)
     } catch {
       setError(t('imageLoadFailed'))
     }
@@ -499,19 +508,23 @@ export const StudioView: FC<{
       return
     }
     if (config === null) return
-    const initial = initialComparisonProviders(comparisonProfiles, provider as CloudImageProvider)
-      .filter(item => mode !== 'edit' || referencesRef.current.length <= 3 || item !== 'dashscope')
-    setComparisonProviders(initial)
+    const initial = initialComparisonProviders(comparisonProfiles, channelId)
+      .filter(item => {
+        if (mode !== 'edit' || referencesRef.current.length <= 3) return true
+        return config.providers.find(p => p.channelId === item)?.provider !== 'dashscope'
+      })
+    setComparisonChannels(initial)
     if (!['1:1', '3:2', '2:3', '16:9', '9:16'].includes(ratio)) setRatio('1:1')
     if (!['standard', '1K', '2K', '4K'].includes(quality)) setQuality('1K')
   }
 
-  const toggleComparisonProvider = (target: CloudImageProvider) => {
-    if (mode === 'edit' && target === 'dashscope' && referencesRef.current.length > 3 && !comparisonProviders.includes(target)) {
+  const toggleComparisonProvider = (target: string) => {
+    const targetIsDashScope = config?.providers.find(p => p.channelId === target)?.provider === 'dashscope'
+    if (mode === 'edit' && targetIsDashScope && referencesRef.current.length > 3 && !comparisonChannels.includes(target)) {
       setError(t('maxReferencesExceeded', { max: '3' }))
       return
     }
-    setComparisonProviders(current => current.includes(target)
+    setComparisonChannels(current => current.includes(target)
       ? current.filter(item => item !== target)
       : [...current, target])
     setError(null)
@@ -551,7 +564,7 @@ export const StudioView: FC<{
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
               mode,
-              provider: target.profile.provider,
+              channelId: target.profile.channelId,
               model: target.profile.model,
               prompt: prompt.trim(),
               ratio: target.ratio,
@@ -581,6 +594,7 @@ export const StudioView: FC<{
           prompt: value.payload.prompt,
           provider: value.payload.provider,
           model: value.payload.model,
+          channelId: value.payload.channelId ?? value.target.profile.channelId,
           createdAt: value.payload.createdAt + idx,
           aspectRatio: value.target.ratio,
           imageSize: value.target.quality,
@@ -604,7 +618,7 @@ export const StudioView: FC<{
         method: 'POST', credentials: 'same-origin', signal: controller.signal,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          mode, provider, model, prompt: prompt.trim(), ratio, quality,
+          mode, channelId, model, prompt: prompt.trim(), ratio, quality,
           ...(count > 1 ? { count } : {}),
           ...(workspace?.path ? { workspaceRoot: workspace.path } : {}),
           ...(referencesPayload === undefined ? {} : {
@@ -629,6 +643,7 @@ export const StudioView: FC<{
         prompt: payload.prompt,
         provider: payload.provider,
         model: payload.model,
+        channelId: payload.channelId ?? channelId,
         createdAt: payload.createdAt + idx,
         aspectRatio: ratio,
         imageSize: quality,
@@ -906,7 +921,7 @@ export const StudioView: FC<{
                     <div className="dsh-ig-status-popover-title">{t('providerStatus')}</div>
                     <ul className="dsh-ig-status-list">
                       {config.providers.map(p => (
-                        <li key={p.provider} className={p.configured ? 'is-configured' : 'is-missing'}>
+                        <li key={p.channelId} className={p.configured ? 'is-configured' : 'is-missing'}>
                           <div className="dsh-ig-status-item-name">
                             <strong>{p.label}</strong>
                             <small>{p.model}</small>
@@ -1148,9 +1163,9 @@ export const StudioView: FC<{
                   </div>
                   <div className="dsh-ig-model-checks">
                     {comparisonProfiles.map(item => {
-                      const target = comparisonTargets.find(candidate => candidate.profile.provider === item.provider)
+                      const target = comparisonTargets.find(candidate => candidate.profile.channelId === item.channelId)
                       return (
-                        <button key={item.provider} type="button" className={target ? 'is-selected' : ''} aria-pressed={Boolean(target)} onClick={() => toggleComparisonProvider(item.provider)}>
+                        <button key={item.channelId} type="button" className={target ? 'is-selected' : ''} aria-pressed={Boolean(target)} onClick={() => toggleComparisonProvider(item.channelId)}>
                           <span className="dsh-ig-model-checkmark">{target ? <Check size={12} /> : null}</span>
                           <span className="dsh-ig-model-copy"><strong>{item.label}</strong><small title={item.model}>{item.model}</small></span>
                           {target && <span className="dsh-ig-model-settings">{target.ratio} · {target.quality}{target.adjusted ? <em>{t('compareAdjusted')}</em> : null}</span>}
@@ -1162,7 +1177,7 @@ export const StudioView: FC<{
                 </div>
                 <div className="dsh-ig-field-grid"><FieldSelect label={t('ratio')} value={ratio} onChange={setRatio} options={comparisonRatioOptions(lang)} /><FieldSelect label={t('quality')} value={quality} onChange={setQuality} options={comparisonQualityOptions(lang)} /></div>
               </> : <>
-                <div className="dsh-ig-field-grid"><FieldSelect label={t('provider')} value={provider} onChange={changeProvider} options={config.providers.map(item => ({ value: item.provider, label: `${item.label}${item.configured ? '' : ` · ${t('unconfigured')}`}` }))} /><FieldSelect label={t('model')} value={model} onChange={setModel} options={activeProfile === undefined ? [] : [{ value: activeProfile.model, label: activeProfile.model }]} /></div>
+                <div className="dsh-ig-field-grid"><FieldSelect label={t('channel')} value={channelId} onChange={changeChannel} options={config.providers.map(item => ({ value: item.channelId, label: `${item.label}${item.configured ? '' : ` · ${t('unconfigured')}`}` }))} /><FieldSelect label={t('model')} value={model} onChange={setModel} options={activeProfile === undefined ? [] : activeProfile.models.map(value => ({ value, label: value }))} /></div>
                 <div className="dsh-ig-field-grid"><FieldSelect label={t('ratio')} value={ratio} onChange={setRatio} options={localizeRatioOptions(activeProfile?.ratioOptions ?? [], lang)} /><FieldSelect label={t('quality')} value={quality} onChange={setQuality} options={localizeQualityOptions(activeProfile?.qualityOptions ?? [], lang)} /></div>
                 <div className="dsh-ig-field"><label>{t('count')}</label><div className="dsh-ig-count-row">{[1, 2, 3, 4].map(option => <button key={option} type="button" className={`dsh-ig-count-pill ${count === option ? 'is-active' : ''}`} onClick={() => setCount(option)}>{t('countUnit', { n: String(option) })}</button>)}</div></div>
               </>}

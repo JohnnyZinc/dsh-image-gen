@@ -323,7 +323,7 @@ pnpm run build
 pnpm run pack:check
 ```
 
-Feedback is welcome through [Issues](https://github.com/shanliuling/dsh-image-gen/issues). Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a Pull Request.
+Feedback is welcome through [Issues](https://github.com/shanliuling/dsh-image-gen/issues). Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a Pull Request. See [KNOWN-ISSUES.md](KNOWN-ISSUES.md) for the known-issues list.
 
 ## License
 

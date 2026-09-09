@@ -11,6 +11,8 @@ export interface ConversationImageRevision {
   createdAt: number
   ratio: string
   quality: string
+  /** Channel instance that produced the revision; absent on older chains. */
+  channelId?: string
 }
 
 export interface ConversationImageRevisionChain {
@@ -95,6 +97,7 @@ function isRevision(value: unknown): value is ConversationImageRevision {
     && Number.isFinite(candidate.createdAt)
     && typeof candidate.ratio === 'string'
     && typeof candidate.quality === 'string'
+    && (candidate.channelId === undefined || typeof candidate.channelId === 'string')
 }
 
 function isAttachment(value: unknown): value is ImageAttachmentRef {

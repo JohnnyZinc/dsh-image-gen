@@ -8,3 +8,9 @@ lib/
 # generated image outputs from saveToWorkspace tests
 /image-*.png
 /image-*.jpg
+
+# pnpm project-local store / cache
+.pnpm-store/
+
+# default saveToWorkspace output folder when the repo root is used as a workspace
+/dsh-image-gen/

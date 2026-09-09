@@ -38,7 +38,7 @@ import { InspirationView } from './inspiration-view.js'
 import { evictAttachmentCache, fetchAttachmentBlob } from './image-cache.js'
 import { copyImageBlob } from './browser-image-utils.js'
 import { conversationRegenerateRequest } from './conversation-regenerate.js'
-import { STUDIO_ROUTE, type StudioWorkspaceInfo, type StudioGenerateResponse } from '../shared.js'
+import { STUDIO_ROUTE, type StudioGenerateResponse, type StudioProviderProfile, type StudioWorkspaceInfo } from '../shared.js'
 
 export interface LocaleService {
   getSnapshot(): { active: string }
@@ -342,6 +342,7 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
   })
   const [serverWorkspaces, setServerWorkspaces] = useState<StudioWorkspaceInfo[]>([])
   const [serverActiveRoot, setServerActiveRoot] = useState<string | null>(null)
+  const [serverProfiles, setServerProfiles] = useState<StudioProviderProfile[]>([])
 
   useEffect(() => {
     try {
@@ -357,6 +358,7 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
         if (!mounted || !data) return
         if (Array.isArray(data.workspaces)) setServerWorkspaces(data.workspaces)
         if (typeof data.workspaceRoot === 'string') setServerActiveRoot(data.workspaceRoot)
+        if (Array.isArray(data.providers)) setServerProfiles(data.providers)
       })
       .catch(() => {})
     return () => {
@@ -680,9 +682,12 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
       const request = conversationRegenerateRequest(
         previewItem,
         regeneratePrompt,
-        previewItem.aspectRatio
-          ? { ratio: previewItem.aspectRatio, quality: previewItem.imageSize || 'standard' }
-          : undefined,
+        {
+          channels: serverProfiles,
+          remembered: previewItem.aspectRatio
+            ? { ratio: previewItem.aspectRatio, quality: previewItem.imageSize || 'standard' }
+            : undefined,
+        },
       )
       if (activeWorkspace?.path) {
         request.workspaceRoot = activeWorkspace.path
@@ -713,6 +718,7 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
         prompt: payload.prompt,
         provider: payload.provider,
         model: payload.model,
+        channelId: payload.channelId,
         createdAt: payload.createdAt,
         aspectRatio: request.ratio,
         imageSize: request.quality,

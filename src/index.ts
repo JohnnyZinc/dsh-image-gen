@@ -37,6 +37,8 @@ interface GeneratedValue {
   provider: ImageProvider
   model: string
   output: string
+  /** Channel instance that produced the image; provenance for faithful regeneration. */
+  channelId?: string
   /** Size adjustments the translation layer made (clamps, nearest mappings). */
   notes?: string
   savedTo?: string
@@ -154,7 +156,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           maxBytes: ctx.attachments.imageLimits.maxImageBytes,
           signal: exec.signal,
         })
-        return saveGenerated(ctx, generated, 'comfyui', workflow.name, 'API workflow', config, exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'comfyui', workflow.name, 'API workflow', config, exec, knownWorkspaceRoots, undefined, channel.id)
       }
       const model = selection.model
       const active = resolveProvider(channelProfile(config, channel, model))
@@ -171,38 +173,38 @@ export function apply(ctx: Context, config: Config = {}): void {
         const aspectRatio = googleAspect(ratio)
         const imageSize = googleSize(quality)
         const generated = await generateGoogleImage({ apiKey: credential.value, endpoint: active.endpoint, model: active.model, prompt: args.prompt, aspectRatio, imageSize, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'google', active.model, `${aspectRatio}, ${imageSize}`, config, exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'google', active.model, `${aspectRatio}, ${imageSize}`, config, exec, knownWorkspaceRoots, undefined, channel.id)
       }
       if (active.provider === 'gitee') {
         const plan = translateGiteeSize(active.model, ratio, quality, resolution)
         const generated = await generateGiteeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'gitee', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+        return saveGenerated(ctx, generated, 'gitee', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes, channel.id)
       }
       if (active.provider === 'modelscope') {
         const plan = translateModelScopeSize(active.model, ratio, quality, resolution)
         const generated = await generateModelScopeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'modelscope', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+        return saveGenerated(ctx, generated, 'modelscope', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes, channel.id)
       }
       if (active.provider === 'antigravity') {
         const plan = translateAntigravitySize(ratio, resolution)
         const generated = await generateOpenAICompatibleImage({ provider: 'antigravity', apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, size: plan.size, quality: antigravityQuality(quality), maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'antigravity', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+        return saveGenerated(ctx, generated, 'antigravity', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes, channel.id)
       }
       if (active.provider === 'dashscope') {
         const plan = translateDashScopeSize(ratio, resolution)
         const size = plan.size ?? '1024*1024'
         const generated = await generateDashScopeImage({ apiKey: credential.value, endpoint: active.endpoint, model: active.model, prompt: args.prompt, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'dashscope', active.model, size, config, exec, knownWorkspaceRoots, plan.notes)
+        return saveGenerated(ctx, generated, 'dashscope', active.model, size, config, exec, knownWorkspaceRoots, plan.notes, channel.id)
       }
       if (active.provider === 'seedream') {
         const tier = seedreamTier(quality)
         const generated = await generateOpenAICompatibleImage({ provider: 'seedream', apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, size: tier, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'seedream', active.model, tier, config, exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'seedream', active.model, tier, config, exec, knownWorkspaceRoots, undefined, channel.id)
       }
       if (active.provider === 'openai') {
         const plan = translateOpenAICompatibleSize(active.model, ratio, quality, resolution)
         const generated = await generateOpenAICompatibleImage({ provider: 'openai', apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, size: plan.size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'openai', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+        return saveGenerated(ctx, generated, 'openai', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes, channel.id)
       }
       throw new Error('Image channel could not be resolved')
     },
@@ -259,7 +261,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           maxBytes: ctx.attachments.imageLimits.maxImageBytes,
           signal: exec.signal,
         })
-        return saveGenerated(ctx, generated, 'comfyui', workflow.name, 'API workflow', config, exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'comfyui', workflow.name, 'API workflow', config, exec, knownWorkspaceRoots, undefined, channel.id)
       }
 
       const model = selection.model
@@ -277,12 +279,12 @@ export function apply(ctx: Context, config: Config = {}): void {
         const aspectRatio = googleAspect(ratio)
         const imageSize = googleSize(quality)
         const generated = await editGoogleImage({ apiKey: credential.value, endpoint: active.endpoint, model: active.model, prompt: args.prompt, sourceImages, aspectRatio, imageSize, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'google', active.model, `${aspectRatio}, ${imageSize}`, config, exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'google', active.model, `${aspectRatio}, ${imageSize}`, config, exec, knownWorkspaceRoots, undefined, channel.id)
       }
       if (active.provider === 'gitee') {
         const plan = translateGiteeSize(active.model, ratio, quality, resolution)
         const generated = await editGiteeImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, plan, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'gitee', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+        return saveGenerated(ctx, generated, 'gitee', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes, channel.id)
       }
       if (active.provider === 'modelscope') {
         throw new Error('ModelScope 渠道暂不支持图生图（编辑协议尚未验证）；请换一个支持编辑的渠道，或反馈让我补充验证。')
@@ -291,22 +293,22 @@ export function apply(ctx: Context, config: Config = {}): void {
         const plan = translateDashScopeSize(ratio, resolution)
         const size = plan.size ?? '1024*1024'
         const generated = await editDashScopeImage({ apiKey: credential.value, endpoint: active.endpoint, model: active.model, prompt: args.prompt, sourceImages, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'dashscope', active.model, size, config, exec, knownWorkspaceRoots, plan.notes)
+        return saveGenerated(ctx, generated, 'dashscope', active.model, size, config, exec, knownWorkspaceRoots, plan.notes, channel.id)
       }
       if (active.provider === 'seedream') {
         const tier = seedreamTier(quality)
         const generated = await editSeedreamImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, size: tier, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'seedream', active.model, tier, config, exec, knownWorkspaceRoots)
+        return saveGenerated(ctx, generated, 'seedream', active.model, tier, config, exec, knownWorkspaceRoots, undefined, channel.id)
       }
       if (active.provider === 'antigravity') {
         const plan = translateAntigravitySize(ratio, resolution)
         const generated = await editOpenAICompatibleImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, ...(plan.size !== undefined ? { size: plan.size } : {}), maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'antigravity', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+        return saveGenerated(ctx, generated, 'antigravity', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes, channel.id)
       }
       if (active.provider === 'openai') {
         const plan = translateOpenAICompatibleSize(active.model, ratio, quality, resolution)
         const generated = await editOpenAICompatibleImage({ apiKey: credential.value, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, ...(plan.size !== undefined ? { size: plan.size } : {}), maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, 'openai', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes)
+        return saveGenerated(ctx, generated, 'openai', active.model, planLabel(plan), config, exec, knownWorkspaceRoots, plan.notes, channel.id)
       }
       throw new Error('Image channel could not be resolved')
     },
@@ -328,7 +330,7 @@ function imageOutput(verb: 'Generated' | 'Edited') {
         attachment: { type: 'object', required: true, additionalProperties: false, properties: {
           attachmentId: { type: 'string', required: true }, mediaType: { type: 'string', required: true }, bytes: { type: 'integer', required: true }, width: { type: 'integer', required: true }, height: { type: 'integer', required: true }, name: { type: 'string' }, originalDimensions: { type: 'object', additionalProperties: false, properties: { width: { type: 'integer', required: true }, height: { type: 'integer', required: true } } },
         } },
-        provider: { type: 'string', required: true }, model: { type: 'string', required: true }, output: { type: 'string', required: true }, notes: { type: 'string' }, savedTo: { type: 'string' }, saveError: { type: 'string' }, seed: { type: 'integer' },
+        provider: { type: 'string', required: true }, model: { type: 'string', required: true }, output: { type: 'string', required: true }, channelId: { type: 'string' }, notes: { type: 'string' }, savedTo: { type: 'string' }, saveError: { type: 'string' }, seed: { type: 'integer' },
       },
     },
     render: (_args: unknown, value: GeneratedValue) => {
@@ -342,6 +344,7 @@ function imageOutput(verb: 'Generated' | 'Edited') {
     },
     presentationMeta: (args: unknown, value: GeneratedValue) => ({
       kind: 'dsh-image-gen', attachment: attachmentMeta(value.attachment), provider: value.provider, model: value.model, output: value.output,
+      ...(typeof value.channelId === 'string' ? { channelId: value.channelId } : {}),
       ...(verb === 'Edited' ? { operation: 'edit' } : {}),
       ...(typeof value.savedTo === 'string' ? { savedTo: value.savedTo } : {}),
       ...(typeof value.seed === 'number' ? { seed: value.seed } : {}),
@@ -368,6 +371,7 @@ async function saveGenerated(
   exec: { agent?: { session: { header: { cwd?: string } } }; signal: AbortSignal },
   knownRoots?: Set<string>,
   notes?: string[],
+  channelId?: string,
 ): Promise<GeneratedValue> {
   // Persist every channel's output as a uniform PNG so downstream files match
   // (JPEG/WebP returned by some proxies are re-encoded to PNG here).
@@ -379,6 +383,7 @@ async function saveGenerated(
   const value: GeneratedValue = {
     attachment, provider, model, output,
     ...(notes !== undefined && notes.length > 0 ? { notes: notes.join('; ') } : {}),
+    ...(typeof channelId === 'string' ? { channelId } : {}),
     ...(typeof generated.seed === 'number' ? { seed: generated.seed } : {}),
   }
   if (config.saveToWorkspace === false) return value

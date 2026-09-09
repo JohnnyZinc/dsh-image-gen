@@ -22,6 +22,7 @@ import {
   type ComfyUIWorkflowEntry,
   type ImageProvider,
   type StudioGenerateResponse,
+  type StudioProviderProfile,
 } from '../shared.js'
 import { saveGalleryItem } from './gallery-store.js'
 import { GalleryViewTab, copyImageBlob, type LocaleService } from './gallery-view.js'
@@ -945,6 +946,7 @@ function ImageResultCard({
       provider: result.provider as ImageProvider,
       model: result.model,
       output: result.output,
+      ...(result.channelId !== undefined ? { channelId: result.channelId } : {}),
       ...(result.savedTo ? { savedTo: result.savedTo } : {}),
       ...(result.seed !== undefined ? { seed: result.seed } : {}),
       ...(sessionId ? { sessionId } : {}),
@@ -1070,10 +1072,25 @@ function ImageResultCard({
     const controller = new AbortController()
     regenerateControllerRef.current = controller
     try {
+      // Channel profiles resolve pre-channelization records by (provider, model);
+      // a fresh GET keeps this card independent of the Gallery tab's snapshot.
+      let channels: StudioProviderProfile[] = []
+      try {
+        const configRes = await fetch(STUDIO_ROUTE, { credentials: 'same-origin', signal: controller.signal })
+        if (configRes.ok) {
+          const payload = await configRes.json() as { providers?: StudioProviderProfile[] }
+          if (Array.isArray(payload.providers)) channels = payload.providers
+        }
+      } catch {
+        // Keep the recorded channelId path; reverse lookup is best-effort.
+      }
       const request = conversationRegenerateRequest(
         activeResult,
         regeneratePrompt,
-        selectedRevision === undefined ? undefined : { ratio: selectedRevision.ratio, quality: selectedRevision.quality },
+        {
+          channels,
+          remembered: selectedRevision === undefined ? undefined : { ratio: selectedRevision.ratio, quality: selectedRevision.quality },
+        },
       )
       const response = await fetch(STUDIO_ROUTE, {
         method: 'POST',
@@ -1095,6 +1112,7 @@ function ImageResultCard({
         createdAt: payload.createdAt,
         ratio: request.ratio,
         quality: request.quality,
+        ...(payload.channelId !== undefined ? { channelId: payload.channelId } : {}),
       }
       await saveGalleryItem({
         id: String(revision.attachment.attachmentId),
@@ -1102,6 +1120,7 @@ function ImageResultCard({
         prompt: revision.prompt,
         provider: revision.provider,
         model: revision.model,
+        ...(revision.channelId !== undefined ? { channelId: revision.channelId } : {}),
         createdAt: revision.createdAt,
         aspectRatio: revision.ratio,
         imageSize: revision.quality,
@@ -1250,6 +1269,7 @@ function imageResultFromBlock(block: ToolCallBlock): ImageResultPresentation | u
     model: typeof meta?.model === 'string' ? meta.model : '',
     output: typeof meta?.output === 'string' ? meta.output : '',
     ...(typeof meta?.savedTo === 'string' ? { savedTo: meta.savedTo } : {}),
+    ...(typeof meta?.channelId === 'string' ? { channelId: meta.channelId } : {}),
     ...(typeof meta?.seed === 'number' ? { seed: meta.seed } : {}),
   }
 }

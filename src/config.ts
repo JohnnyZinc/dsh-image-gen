@@ -369,7 +369,7 @@ function defaultChannel(config: Config, channels: readonly AgentChannelChoice[])
 }
 
 /** The model an unnamed call uses on the given channel: the recorded default when it lives here, else the first entry. */
-function defaultModelOn(config: Config, channel: AgentChannelChoice): string {
+export function defaultModelOn(config: Config, channel: AgentChannelChoice): string {
   const recorded = config.defaultModel?.trim() ?? ''
   if (recorded !== '' && config.defaultChannelId?.trim().toLowerCase() === channel.id.toLowerCase() && channel.models.includes(recorded)) return recorded
   return channel.models[0] ?? ''
